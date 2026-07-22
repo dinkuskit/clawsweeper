@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
   constants as fsConstants,
   existsSync,
+  fchmodSync,
   fstatSync,
   openSync,
   readFileSync,
@@ -94,44 +95,6 @@ function parseObjectCandidate(value) {
   }
 }
 
-function extractSingleJsonObject(value) {
-  const direct = parseObjectCandidate(value);
-  if (direct) return direct;
-
-  const candidates = [];
-  let start = -1;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (start < 0) {
-      if (character === "{") {
-        start = index;
-        depth = 1;
-      }
-      continue;
-    }
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') inString = true;
-    else if (character === "{") depth += 1;
-    else if (character === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        const parsed = parseObjectCandidate(value.slice(start, index + 1));
-        if (parsed) candidates.push(parsed);
-        start = -1;
-      }
-    }
-  }
-  return candidates.length === 1 ? candidates[0] : null;
-}
-
 function sanitize(value) {
   let safe = String(value ?? "");
   const token = process.env.COPILOT_GITHUB_TOKEN;
@@ -209,6 +172,21 @@ function recordCopilotFailure(value, status, category = classifyCopilotFailure(v
   }
 }
 
+function recordCopilotAcceptance() {
+  const statusPath = join(artifactRoot, "codex", "copilot-adapter-status.json");
+  try {
+    const fd = openSync(
+      statusPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    writeFileSync(fd, '{"kind":"clawsweeper_copilot_adapter","status":"accepted"}\n', "utf8");
+    closeSync(fd);
+  } catch {
+    // The accepted native output remains authoritative when telemetry cannot be recorded.
+  }
+}
+
 function parseCodexInvocation(args) {
   if (args.shift() !== "exec") fail("only the Codex exec protocol is admitted");
   const parsed = { configs: [], terminalStdin: false };
@@ -252,6 +230,7 @@ function parseCodexInvocation(args) {
 }
 
 const copilotBin = absoluteExistingPath("CLAWSWEEPER_REAL_COPILOT", "file");
+const decisionMcpBin = absoluteExistingPath("CLAWSWEEPER_COPILOT_DECISION_MCP", "file");
 const targetRoot = absoluteExistingPath("CLAWSWEEPER_ADAPTER_TARGET_DIR", "directory");
 const artifactRoot = absoluteExistingPath("CLAWSWEEPER_ADAPTER_ARTIFACT_DIR", "directory");
 const schemaRoot = absoluteExistingPath("CLAWSWEEPER_ADAPTER_SCHEMA_DIR", "directory");
@@ -291,6 +270,15 @@ const schemaPath = pathWithin(schemaRoot, realpathSync(invocation.schema), "the 
 if (schemaPath !== join(schemaRoot, "clawsweeper-decision.schema.json")) {
   fail("only the native ClawSweeper decision schema is admitted");
 }
+const engineRoot = realpathSync(dirname(schemaRoot));
+const validatorPath = pathWithin(
+  engineRoot,
+  realpathSync(join(engineRoot, "dist", "clawsweeper.js")),
+  "the native decision validator",
+);
+if (validatorPath !== join(engineRoot, "dist", "clawsweeper.js")) {
+  fail("only the pinned native ClawSweeper decision validator is admitted");
+}
 const outputPath = pathWithin(
   artifactRoot,
   join(realpathSync(dirname(invocation.output)), basename(invocation.output)),
@@ -304,7 +292,7 @@ const prompt = readBoundedStdin();
 if (!prompt.trim()) fail("the review prompt was empty");
 const schema = readFileSync(schemaPath, "utf8");
 if (Buffer.byteLength(schema) > MAX_SCHEMA_BYTES) fail("the decision schema exceeded its bound");
-const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nReturn exactly one JSON object and no prose or Markdown fence. The object must satisfy this JSON Schema exactly:\n\n${schema}\n`;
+const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nAfter completing the review, call the ClawSweeper submit_review tool. Its arguments must satisfy the native decision schema and semantic invariants enforced by that tool. If validation rejects an invariant, correct it and retry. An accepted tool call is the only accepted response.\n`;
 
 // Linux rejects any single argv entry larger than MAX_ARG_STRLEN (normally 128 KiB),
 // even when the aggregate ARG_MAX limit is larger. A native ClawSweeper prompt plus
@@ -332,10 +320,10 @@ try {
 const bootstrapPrompt = [
   "Perform the ClawSweeper review from the complete request in this admitted read-only file:",
   requestPath,
-  "Use the view tool repeatedly until you have read the entire file, including the response schema.",
-  "Follow that request exactly, then use the create tool to write only the required JSON object to:",
-  responsePath,
-  "Do not create or modify any other file. Do not finish until the response file exists.",
+  "Use the view tool repeatedly until you have read the entire file, including the response requirements.",
+  "Follow that request exactly, then call the ClawSweeper submit_review tool.",
+  "If native validation rejects an invariant, correct it and retry the tool call.",
+  "Do not finish until that tool confirms the native review was accepted.",
 ].join("\n");
 if (Buffer.byteLength(bootstrapPrompt) > MAX_BOOTSTRAP_PROMPT_BYTES) {
   try {
@@ -347,6 +335,17 @@ if (Buffer.byteLength(bootstrapPrompt) > MAX_BOOTSTRAP_PROMPT_BYTES) {
   fail("the Copilot bootstrap prompt exceeded its bound", 1);
 }
 
+const additionalMcpConfig = JSON.stringify({
+  mcpServers: {
+    ClawSweeper: {
+      type: "local",
+      command: process.execPath,
+      args: [decisionMcpBin, schemaPath, responsePath, validatorPath],
+      env: {},
+      tools: ["submit_review"],
+    },
+  },
+});
 const copilotArgs = [
   `--model=${configuredModel}`,
   `--effort=${configuredEffort}`,
@@ -360,9 +359,10 @@ const copilotArgs = [
   "--no-remote-export",
   "--disable-builtin-mcps",
   "--disallow-temp-dir",
-  "--available-tools=view,glob,grep,create",
+  `--additional-mcp-config=${additionalMcpConfig}`,
+  "--available-tools=view,glob,grep,ClawSweeper-submit_review",
   "--allow-tool=view,glob,grep",
-  `--allow-tool=write(${responsePath})`,
+  "--allow-tool=ClawSweeper(submit_review)",
   "--secret-env-vars=COPILOT_GITHUB_TOKEN",
   "--max-ai-credits=50",
   "--stream=off",
@@ -410,46 +410,48 @@ if (Buffer.byteLength(result.stdout ?? "") > MAX_RESPONSE_BYTES) {
   );
   fail("Copilot CLI exceeded the bounded response contract", 1);
 }
-let response = result.stdout ?? "";
-if (existsSync(responsePath)) {
-  let responseFd;
-  try {
-    responseFd = openSync(responsePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const responseStats = fstatSync(responseFd);
-    if (!responseStats.isFile() || responseStats.size > MAX_RESPONSE_BYTES) {
-      throw new Error("invalid bounded response file");
-    }
-    response = readFileSync(responseFd, "utf8");
-  } catch {
-    try {
-      unlinkSync(responsePath);
-    } catch {
-      // The bounded response failure remains authoritative.
-    }
-    recordCopilotFailure(
-      "Copilot CLI wrote an invalid bounded response file",
-      0,
-      "response_contract",
-    );
-    fail("Copilot CLI wrote an invalid bounded response file", 1);
-  } finally {
-    if (responseFd !== undefined) closeSync(responseFd);
-  }
-  try {
-    unlinkSync(responsePath);
-  } catch {
-    // The parsed response remains authoritative; the workflow revokes the scratch tree.
-  }
-}
-const decision = extractSingleJsonObject(response);
-if (!decision) {
+if (!existsSync(responsePath)) {
   if (result.status !== 0) {
     recordCopilotFailure(result.stderr, result.status);
     const detail = sanitize(result.stderr).slice(-MAX_ERROR_BYTES).trim();
     fail(`Copilot CLI exited with status ${result.status}${detail ? `: ${detail}` : ""}`, 1);
   }
-  recordCopilotFailure("Copilot CLI returned invalid JSON", 0, "response_contract");
-  fail("Copilot CLI did not return one unambiguous JSON object", 1);
+  recordCopilotFailure("Copilot CLI did not submit a native review", 0, "response_contract");
+  fail("Copilot CLI did not submit through the native ClawSweeper tool", 1);
+}
+let responseFd;
+let response;
+try {
+  responseFd = openSync(responsePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const responseStats = fstatSync(responseFd);
+  if (!responseStats.isFile() || responseStats.size > MAX_RESPONSE_BYTES) {
+    throw new Error("invalid bounded response file");
+  }
+  response = readFileSync(responseFd, "utf8");
+} catch {
+  try {
+    unlinkSync(responsePath);
+  } catch {
+    // The bounded response failure remains authoritative.
+  }
+  recordCopilotFailure(
+    "Copilot CLI wrote an invalid bounded response file",
+    0,
+    "response_contract",
+  );
+  fail("Copilot CLI wrote an invalid bounded response file", 1);
+} finally {
+  if (responseFd !== undefined) closeSync(responseFd);
+}
+try {
+  unlinkSync(responsePath);
+} catch {
+  // The parsed response remains authoritative; the workflow revokes the scratch tree.
+}
+const decision = parseObjectCandidate(response);
+if (!decision) {
+  recordCopilotFailure("Copilot CLI submitted invalid JSON", 0, "response_contract");
+  fail("Copilot CLI did not submit one exact JSON object", 1);
 }
 try {
   const fd = openSync(
@@ -458,7 +460,9 @@ try {
     0o600,
   );
   writeFileSync(fd, `${JSON.stringify(decision)}\n`, "utf8");
+  fchmodSync(fd, 0o444);
   closeSync(fd);
+  recordCopilotAcceptance();
 } catch {
   recordCopilotFailure("the bounded native output file could not be created", 0, "execution");
   fail("the bounded native output file could not be created", 1);

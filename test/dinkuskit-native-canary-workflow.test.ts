@@ -215,6 +215,7 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
   assert.match(wrapper, /COPILOT_GITHUB_TOKEN="\$COPILOT_GITHUB_TOKEN"/);
   assert.match(wrapper, /CLAWSWEEPER_COPILOT_MODEL/);
   assert.match(wrapper, /CLAWSWEEPER_COPILOT_EFFORT/);
+  assert.match(wrapper, /CLAWSWEEPER_COPILOT_DECISION_MCP="\$CLAWSWEEPER_COPILOT_DECISION_MCP"/);
   assert.match(wrapper, /GIT_CONFIG_GLOBAL="\$CLAWSWEEPER_MODEL_GIT_CONFIG"/);
   assert.doesNotMatch(wrapper, /\bGH_TOKEN\b|\bGITHUB_TOKEN\b|OPENAI_API_KEY|APP_PRIVATE_KEY/);
   assert.match(source, /CANARY_ROOT:\s*\/opt\/dinkuskit-clawsweeper-canary/);
@@ -222,6 +223,15 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
     source,
     /\$RUNNER_TEMP\/(?:dinkuskit-blocks|review-artifacts|clawsweeper-model)/,
   );
+});
+
+test("failed reviews report only bounded adapter or native failure classes", () => {
+  const failureClass = JSON.stringify(step("review", "Report the bounded Copilot failure class"));
+  assert.match(failureClass, /copilot-adapter-status\.json/);
+  assert.match(failureClass, /native_postprocess/);
+  assert.match(failureClass, /adapter_handoff/);
+  assert.match(failureClass, /adapter_boundary/);
+  assert.doesNotMatch(failureClass, /cat\s|copilot\.stderr|codex\.stderr/);
 });
 
 test("target checkout completes before Copilot installation and ignores ambient Git config", () => {
