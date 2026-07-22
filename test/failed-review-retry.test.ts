@@ -14,6 +14,15 @@ import {
 } from "../dist/clawsweeper.js";
 import { tmpPrefix, withMockGh, workPlanCandidateReport } from "./helpers.ts";
 
+function execClawsweeperSync(args: string[]): void {
+  execFileSync(process.execPath, args, {
+    env: {
+      ...process.env,
+      GITHUB_REPOSITORY: "openclaw/clawsweeper",
+    },
+  });
+}
+
 function failedReviewReport(overrides = {}) {
   return `${workPlanCandidateReport({
     repository: "openclaw/openclaw",
@@ -109,7 +118,7 @@ function runFailedIssueRetry(
   fixture: ReturnType<typeof failedIssueRetryFixture>,
   extraArgs: string[] = [],
 ): void {
-  execFileSync(process.execPath, [
+  execClawsweeperSync([
     "dist/clawsweeper.js",
     "retry-failed-reviews",
     "--target-repo",
@@ -513,7 +522,7 @@ process.exit(1);
 `;
 
     withMockGh(root, ghMock, () => {
-      execFileSync(process.execPath, [
+      execClawsweeperSync([
         "dist/clawsweeper.js",
         "retry-failed-reviews",
         "--target-repo",
@@ -538,7 +547,7 @@ process.exit(1);
         /^failed_review_retry_count:/m,
       );
 
-      execFileSync(process.execPath, [
+      execClawsweeperSync([
         "dist/clawsweeper.js",
         "retry-failed-reviews",
         "--target-repo",
@@ -763,7 +772,7 @@ process.exit(1);
 `;
   try {
     withMockGh(root, ghMock, () => {
-      execFileSync(process.execPath, [
+      execClawsweeperSync([
         "dist/clawsweeper.js",
         "retry-failed-reviews",
         "--target-repo",
@@ -992,7 +1001,7 @@ process.exit(1);
 `;
 
     const runRetry = () => {
-      execFileSync(process.execPath, [
+      execClawsweeperSync([
         "dist/clawsweeper.js",
         "retry-failed-reviews",
         "--target-repo",
