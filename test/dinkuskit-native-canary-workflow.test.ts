@@ -185,6 +185,7 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
   );
   const prepare = JSON.stringify(step("review", "Prepare the unprivileged Copilot runtime"));
   const revoke = JSON.stringify(step("review", "Revoke model runtime write access"));
+  const failureClass = JSON.stringify(step("review", "Report the bounded Copilot failure class"));
   const wrapper = readFileSync("scripts/run-codex-unprivileged.sh", "utf8");
   assert.match(install, /GitHub Copilot CLI 1\.0\.73\./);
   assert.doesNotMatch(install, /--version\)" = "1\.0\.73"/);
@@ -201,6 +202,13 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
   assert.match(revoke, /id \\"\$CLAWSWEEPER_MODEL_USER\\"/);
   assert.match(revoke, /pkill --signal KILL --uid/);
   assert.match(revoke, /chmod -R go-w/);
+  assert.match(failureClass, /copilot-failure\.json/);
+  assert.match(failureClass, /clawsweeper_copilot_failure/);
+  assert.match(failureClass, /authentication/);
+  assert.match(failureClass, /model_access/);
+  assert.match(failureClass, /cli_contract/);
+  assert.match(failureClass, /response_contract/);
+  assert.doesNotMatch(failureClass, /codex\.stderr|COPILOT_GITHUB_TOKEN|\bcat\b/);
   assert.match(wrapper, /sudo --non-interactive --set-home --user=/);
   assert.match(wrapper, /\/usr\/bin\/env -i/);
   assert.match(wrapper, /CLAWSWEEPER_PROOF_SCRATCH_DIR/);

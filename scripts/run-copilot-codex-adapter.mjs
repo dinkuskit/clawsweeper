@@ -101,6 +101,69 @@ function sanitize(value) {
     );
 }
 
+function classifyCopilotFailure(value) {
+  const message = sanitize(value);
+  if (
+    /authentication token found but could not be validated|failed to fetch PAT user login|failed to authenticate|unable to verify[^\n]*credentials|bad credentials|\b401\b|token (?:is )?(?:invalid|expired|revoked)|invalid[^\n]*token/i.test(
+      message,
+    )
+  ) {
+    return "authentication";
+  }
+  if (
+    /access denied by policy|copilot[^\n]*(?:license|subscription|not enabled|not available)|(?:license|subscription)[^\n]*copilot|copilot requests[^\n]*permission/i.test(
+      message,
+    )
+  ) {
+    return "copilot_access";
+  }
+  if (
+    /model[^\n]*(?:unavailable|not available|not found|does not exist|unsupported|access denied|not accessible|do not have access)|(?:unknown|invalid|unsupported)[^\n]*model|no access to (?:the )?model/i.test(
+      message,
+    )
+  ) {
+    return "model_access";
+  }
+  if (
+    /(?:unknown|invalid|unsupported)[^\n]*(?:option|argument|tool)|reasoning effort[^\n]*(?:unsupported|invalid)|non-interactive[^\n]*(?:allow-all-tools|permission)/i.test(
+      message,
+    )
+  ) {
+    return "cli_contract";
+  }
+  if (
+    /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND)\b|network|fetch failed|socket hang up/i.test(
+      message,
+    )
+  ) {
+    return "network";
+  }
+  return "unclassified";
+}
+
+function recordCopilotFailure(value, status, category = classifyCopilotFailure(value)) {
+  const diagnosticPath = join(artifactRoot, "codex", "copilot-failure.json");
+  try {
+    const fd = openSync(
+      diagnosticPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    writeFileSync(
+      fd,
+      `${JSON.stringify({
+        category,
+        exit_status: Number.isInteger(status) ? status : null,
+        kind: "clawsweeper_copilot_failure",
+      })}\n`,
+      "utf8",
+    );
+    closeSync(fd);
+  } catch {
+    // The primary failure remains authoritative when a bounded diagnostic cannot be recorded.
+  }
+}
+
 function parseCodexInvocation(args) {
   if (args.shift() !== "exec") fail("only the Codex exec protocol is admitted");
   const parsed = { configs: [], terminalStdin: false };
@@ -238,12 +301,21 @@ const result = spawnSync(copilotBin, copilotArgs, {
   maxBuffer: MAX_RESPONSE_BYTES,
   stdio: ["ignore", "pipe", "pipe"],
 });
-if (result.error) fail(`Copilot CLI failed to execute: ${result.error.message}`, 1);
+if (result.error) {
+  recordCopilotFailure(result.error.message, null, "execution");
+  fail(`Copilot CLI failed to execute: ${result.error.message}`, 1);
+}
 if (result.status !== 0) {
+  recordCopilotFailure(result.stderr, result.status);
   const detail = sanitize(result.stderr).slice(-MAX_ERROR_BYTES).trim();
   fail(`Copilot CLI exited with status ${result.status}${detail ? `: ${detail}` : ""}`, 1);
 }
 if (Buffer.byteLength(result.stdout ?? "") > MAX_RESPONSE_BYTES) {
+  recordCopilotFailure(
+    "Copilot CLI exceeded the bounded response contract",
+    0,
+    "response_contract",
+  );
   fail("Copilot CLI exceeded the bounded response contract", 1);
 }
 const response = stripOptionalJsonFence(result.stdout ?? "");
@@ -251,9 +323,11 @@ let decision;
 try {
   decision = JSON.parse(response);
 } catch {
+  recordCopilotFailure("Copilot CLI returned invalid JSON", 0, "response_contract");
   fail("Copilot CLI did not return exactly one JSON object", 1);
 }
 if (!decision || typeof decision !== "object" || Array.isArray(decision)) {
+  recordCopilotFailure("Copilot CLI returned a non-object JSON value", 0, "response_contract");
   fail("Copilot CLI returned a non-object JSON value", 1);
 }
 try {
@@ -265,5 +339,6 @@ try {
   writeFileSync(fd, `${JSON.stringify(decision)}\n`, "utf8");
   closeSync(fd);
 } catch {
+  recordCopilotFailure("the bounded native output file could not be created", 0, "execution");
   fail("the bounded native output file could not be created", 1);
 }
