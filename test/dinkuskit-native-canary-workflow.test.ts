@@ -45,16 +45,54 @@ function step(jobName: string, name: string): Step {
   return value;
 }
 
-test("DinkusKit canary is manual or explicitly reusable and exact-target scoped", () => {
+test("DinkusKit canary is reusable and binds a caller-supplied exact public repository", () => {
   assert.deepEqual(Object.keys(workflow.on ?? {}), ["workflow_dispatch", "workflow_call"]);
   assert.match(source, /workflow_call:[\s\S]*COPILOT_GITHUB_TOKEN:[\s\S]*required: true/);
   assert.match(source, /workflow_call:[\s\S]*CLAWSWEEPER_APP_PRIVATE_KEY:[\s\S]*required: true/);
+  assert.match(source, /target_repository:[\s\S]*required: true[\s\S]*type: string/);
+  assert.match(source, /target_repository_id:[\s\S]*required: true[\s\S]*type: string/);
   assert.deepEqual(workflow.permissions, {});
-  assert.equal(workflow.env?.TARGET_REPO, "dinkuskit/blocks");
-  assert.equal(workflow.env?.TARGET_REPOSITORY_ID, "1306882611");
+  assert.equal(workflow.env?.TARGET_REPOSITORY, "${{ inputs.target_repository }}");
+  assert.equal(
+    workflow.env?.TARGET_REPO,
+    "${{ format('dinkuskit/{0}', inputs.target_repository) }}",
+  );
+  assert.equal(workflow.env?.TARGET_REPOSITORY_ID, "${{ inputs.target_repository_id }}");
+  assert.equal(
+    workflow.env?.STATE_SLUG,
+    "${{ format('dinkuskit-{0}', inputs.target_repository) }}",
+  );
   assert.equal(workflow.env?.STATE_REPO, "dinkuskit/clawsweeper-state");
   assert.equal(workflow.env?.UPSTREAM_BASE_SHA, "e9423a404ffe6527373b84053e1df4d0d8bbd77b");
-  assert.match(source, /PR_NUMBER" != "7"/);
+  const admissionSteps = job("admit").steps ?? [];
+  const inputValidationIndex = admissionSteps.findIndex(
+    (candidate) => candidate.name === "Validate immutable caller inputs",
+  );
+  const tokenIndex = admissionSteps.findIndex(
+    (candidate) => candidate.name === "Mint the repository-scoped admission token",
+  );
+  assert.ok(inputValidationIndex >= 0);
+  assert.ok(
+    tokenIndex > inputValidationIndex,
+    "inputs must be allowlisted before App token minting",
+  );
+  const inputValidation = admissionSteps[inputValidationIndex]?.run ?? "";
+  for (const binding of [
+    "blocks:1306882611",
+    "template-store:1306882668",
+    "template-services:1306882701",
+    "template-marketing:1306882756",
+    "inventory:1307843786",
+    "coupons:1307843842",
+    "bundles:1307843885",
+  ]) {
+    assert.match(inputValidation, new RegExp(binding));
+  }
+  assert.match(inputValidation, /not in the DinkusKit canary allowlist/);
+  assert.match(source, /target_repository_id must be a positive numeric GitHub repository ID/);
+  assert.match(source, /base_ref" != "\$default_branch"/);
+  assert.match(source, /visibility" != "public"/);
+  assert.doesNotMatch(source, /dinkuskit\/blocks|PR_NUMBER" != "7"/);
   assert.match(source, /expected_base_sha must be a lowercase 40-character SHA/);
   assert.match(source, /expected_head_sha must be a lowercase 40-character SHA/);
 });
@@ -154,7 +192,7 @@ test("publisher requests only target comment/label and isolated state capabiliti
   assert.match(publish, /permission-issues":"write/);
   assert.match(publish, /permission-pull-requests":"write/);
   assert.match(publish, /permission-statuses":"read/);
-  assert.match(publish, /repositories":"blocks/);
+  assert.match(publish, /repositories":"\$\{\{ inputs\.target_repository \}\}"/);
   assert.match(publish, /repositories":"clawsweeper-state/);
   assert.match(publish, /permission-contents":"write/);
   assert.doesNotMatch(publish, /permission-(?:actions|checks|deployments|workflows)":"write/);
@@ -176,6 +214,10 @@ test("cross-repository reads use narrow App tokens instead of the control GITHUB
   assert.match(preflight, /permission-contents":"read/);
   assert.match(preflight, /permission-issues":"read/);
   assert.match(preflight, /permission-pull-requests":"read/);
+  for (const tokenStep of [admission, reviewToken, preflight]) {
+    assert.match(tokenStep, /repositories":"\$\{\{ inputs\.target_repository \}\}"/);
+    assert.doesNotMatch(tokenStep, /repositories":"blocks/);
+  }
   assert.doesNotMatch(source, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
 });
 
@@ -219,10 +261,15 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
   assert.match(wrapper, /GIT_CONFIG_GLOBAL="\$CLAWSWEEPER_MODEL_GIT_CONFIG"/);
   assert.doesNotMatch(wrapper, /\bGH_TOKEN\b|\bGITHUB_TOKEN\b|OPENAI_API_KEY|APP_PRIVATE_KEY/);
   assert.match(source, /CANARY_ROOT:\s*\/opt\/dinkuskit-clawsweeper-canary/);
-  assert.doesNotMatch(
-    source,
-    /\$RUNNER_TEMP\/(?:dinkuskit-blocks|review-artifacts|clawsweeper-model)/,
-  );
+  assert.doesNotMatch(source, /\$RUNNER_TEMP\/(?:review-artifacts|clawsweeper-model)/);
+});
+
+test("publication state is isolated under the verified dynamic repository slug", () => {
+  const publish = jobSource("publish");
+  assert.match(publish, /state_root=\\"\.\.\/state\/records\/\$STATE_SLUG\\"/);
+  assert.match(publish, /git -C state add -- \\"records\/\$STATE_SLUG\\"/);
+  assert.match(publish, /review: publish \$TARGET_REPO#\$PR_NUMBER/);
+  assert.doesNotMatch(publish, /records\/dinkuskit-blocks/);
 });
 
 test("failed reviews report only bounded adapter or native failure classes", () => {
