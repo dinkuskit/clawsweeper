@@ -83,10 +83,51 @@ function readBoundedStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function stripOptionalJsonFence(value) {
-  const trimmed = value.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/i);
-  return (fenced?.[1] ?? trimmed).trim();
+function parseObjectCandidate(value) {
+  try {
+    const parsed = JSON.parse(value.trim());
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractSingleJsonObject(value) {
+  const direct = parseObjectCandidate(value);
+  if (direct) return direct;
+
+  const candidates = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (start < 0) {
+      if (character === "{") {
+        start = index;
+        depth = 1;
+      }
+      continue;
+    }
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        const parsed = parseObjectCandidate(value.slice(start, index + 1));
+        if (parsed) candidates.push(parsed);
+        start = -1;
+      }
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function sanitize(value) {
@@ -364,17 +405,10 @@ if (Buffer.byteLength(result.stdout ?? "") > MAX_RESPONSE_BYTES) {
   );
   fail("Copilot CLI exceeded the bounded response contract", 1);
 }
-const response = stripOptionalJsonFence(result.stdout ?? "");
-let decision;
-try {
-  decision = JSON.parse(response);
-} catch {
+const decision = extractSingleJsonObject(result.stdout ?? "");
+if (!decision) {
   recordCopilotFailure("Copilot CLI returned invalid JSON", 0, "response_contract");
-  fail("Copilot CLI did not return exactly one JSON object", 1);
-}
-if (!decision || typeof decision !== "object" || Array.isArray(decision)) {
-  recordCopilotFailure("Copilot CLI returned a non-object JSON value", 0, "response_contract");
-  fail("Copilot CLI returned a non-object JSON value", 1);
+  fail("Copilot CLI did not return one unambiguous JSON object", 1);
 }
 try {
   const fd = openSync(

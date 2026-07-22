@@ -199,16 +199,45 @@ test("Copilot adapter keeps oversized native requests out of the process argumen
   }
 });
 
-test("Copilot adapter accepts one optional JSON fence and normalizes the output", () => {
+test("Copilot adapter accepts one JSON object wrapped in prose or a fence", () => {
   const fixture = createFixture();
   try {
     const result = runAdapter(fixture, {
-      response: '```json\n{"decision":"keep_open"}\n```\n',
+      response: 'Completed the review.\n```json\n{"decision":"keep_open"}\n```\n',
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(fixture.output, "utf8"), '{"decision":"keep_open"}\n');
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Copilot adapter accepts one inline JSON object and rejects ambiguous objects", () => {
+  const acceptedFixture = createFixture();
+  try {
+    const result = runAdapter(acceptedFixture, {
+      response: 'Native decision: {"decision":"keep_open"} end.',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(acceptedFixture.output, "utf8"), '{"decision":"keep_open"}\n');
+  } finally {
+    rmSync(acceptedFixture.root, { recursive: true, force: true });
+  }
+
+  const rejectedFixture = createFixture();
+  try {
+    const result = runAdapter(rejectedFixture, {
+      response: '{"decision":"keep_open"}\n{"decision":"close"}',
+    });
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(readFileSync(rejectedFixture.failureDiagnostic, "utf8")), {
+      category: "response_contract",
+      exit_status: 0,
+      kind: "clawsweeper_copilot_failure",
+    });
+    assert.equal(existsSync(rejectedFixture.output), false);
+  } finally {
+    rmSync(rejectedFixture.root, { recursive: true, force: true });
   }
 });
 
