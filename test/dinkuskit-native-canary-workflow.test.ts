@@ -180,9 +180,14 @@ test("cross-repository reads use narrow App tokens instead of the control GITHUB
 });
 
 test("Copilot runs through a token-minimal unprivileged wrapper", () => {
+  const install = JSON.stringify(
+    step("review", "Install the pinned GitHub Copilot CLI without shared caches"),
+  );
   const prepare = JSON.stringify(step("review", "Prepare the unprivileged Copilot runtime"));
   const revoke = JSON.stringify(step("review", "Revoke model runtime write access"));
   const wrapper = readFileSync("scripts/run-codex-unprivileged.sh", "utf8");
+  assert.match(install, /GitHub Copilot CLI 1\.0\.73\./);
+  assert.doesNotMatch(install, /--version\)" = "1\.0\.73"/);
   assert.match(prepare, /adduser --system/);
   assert.match(prepare, /clawsweeper-share/);
   assert.doesNotMatch(prepare, /groups "\$runner_group"/);
@@ -192,6 +197,8 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
   assert.match(prepare, /chmod -R a-w/);
   assert.match(prepare, /safe\.directory.*\$CANARY_TARGET/);
   assert.doesNotMatch(prepare, /safe\.directory[^\n]*\*/);
+  assert.match(revoke, /\$\{CLAWSWEEPER_MODEL_USER:-\}/);
+  assert.match(revoke, /id \\"\$CLAWSWEEPER_MODEL_USER\\"/);
   assert.match(revoke, /pkill --signal KILL --uid/);
   assert.match(revoke, /chmod -R go-w/);
   assert.match(wrapper, /sudo --non-interactive --set-home --user=/);

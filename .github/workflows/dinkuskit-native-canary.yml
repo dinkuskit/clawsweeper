@@ -286,7 +286,10 @@ jobs:
           test "$(node -p "require('$copilot_prefix/node_modules/@github/copilot/package.json').version")" = "1.0.73"
           test "$(node -p "require('$copilot_prefix/node_modules/detect-libc/package.json').version")" = "2.1.2"
           test -x "$copilot_prefix/node_modules/.bin/copilot"
-          test "$($copilot_prefix/node_modules/.bin/copilot --version)" = "1.0.73"
+          copilot_version_line="$(
+            "$copilot_prefix/node_modules/.bin/copilot" --version | sed -n '1p'
+          )"
+          test "$copilot_version_line" = "GitHub Copilot CLI 1.0.73."
           echo "CLAWSWEEPER_COPILOT_PREFIX=$copilot_prefix" >> "$GITHUB_ENV"
 
       - name: Prepare the unprivileged Copilot runtime
@@ -407,7 +410,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo pkill --signal KILL --uid "$CLAWSWEEPER_MODEL_USER" 2>/dev/null || true
+          if [ -n "${CLAWSWEEPER_MODEL_USER:-}" ] \
+            && id "$CLAWSWEEPER_MODEL_USER" >/dev/null 2>&1; then
+            sudo pkill --signal KILL --uid "$CLAWSWEEPER_MODEL_USER" 2>/dev/null || true
+          fi
           if [ -d "$CANARY_ARTIFACTS" ]; then
             sudo chown -R "$USER:$(id -gn)" "$CANARY_ARTIFACTS"
             chmod -R go-w "$CANARY_ARTIFACTS"
