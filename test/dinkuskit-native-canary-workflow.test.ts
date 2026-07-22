@@ -254,8 +254,9 @@ test("reusable jobs check out and bind the called workflow commit, not the calle
     assert.equal(checkout.with?.repository, "${{ job.workflow_repository }}");
     assert.equal(checkout.with?.ref, "${{ job.workflow_sha }}");
   }
-  assert.match(source, /GITHUB_WORKFLOW_SHA/);
-  assert.doesNotMatch(source, /\$GITHUB_SHA|github\.sha/);
+  assert.match(source, /ENGINE_SHA: \$\{\{ job\.workflow_sha \}\}/);
+  assert.match(source, /EXACT_REVIEW_SOURCE_SHA="\$ENGINE_SHA"/);
+  assert.doesNotMatch(source, /GITHUB_(?:WORKFLOW_)?SHA|github\.sha/);
 });
 
 test("public canary disables trusted-host media preprocessing in the native engine", () => {

@@ -202,9 +202,11 @@ jobs:
       - name: Build the pinned native engine without shared caches
         working-directory: clawsweeper
         shell: bash
+        env:
+          ENGINE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+          test "$(git rev-parse HEAD)" = "$ENGINE_SHA"
           git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
           corepack enable
           corepack prepare pnpm@11.10.0 --activate
@@ -436,6 +438,8 @@ jobs:
       - name: Create the bounded native review bundle
         working-directory: /opt/dinkuskit-clawsweeper-canary/engine
         shell: bash
+        env:
+          ENGINE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
           decision="$(jq -nc \
@@ -447,7 +451,7 @@ jobs:
             --arg head_repo "$HEAD_REPO" \
             --arg head_sha "$HEAD_SHA" \
             --arg merge_base_sha "$MERGE_BASE_SHA" \
-            --arg engine_sha "$GITHUB_WORKFLOW_SHA" \
+            --arg engine_sha "$ENGINE_SHA" \
             --arg upstream_base_sha "$UPSTREAM_BASE_SHA" \
             '{target_repo:$target_repo,repository_id:($repository_id|tonumber),item_number:($item_number|tonumber),base_ref:$base_ref,base_sha:$base_sha,head_repo:$head_repo,head_sha:$head_sha,merge_base_sha:$merge_base_sha,engine_sha:$engine_sha,upstream_base_sha:$upstream_base_sha}')"
           export EXACT_REVIEW_ACTION_LEDGER_ROOT=""
@@ -466,7 +470,7 @@ jobs:
           export EXACT_REVIEW_PRODUCER_JOB="review"
           export EXACT_REVIEW_PROTOCOL_VERSION="1"
           export EXACT_REVIEW_REPORT_PATH="$CANARY_ARTIFACTS/$PR_NUMBER.md"
-          export EXACT_REVIEW_SOURCE_SHA="$GITHUB_WORKFLOW_SHA"
+          export EXACT_REVIEW_SOURCE_SHA="$ENGINE_SHA"
           export EXACT_REVIEW_TARGET_BRANCH="$BASE_REF"
           export EXACT_REVIEW_TARGET_REPO="$TARGET_REPO"
           pnpm run --silent repair:exact-review-bundle create
@@ -521,9 +525,11 @@ jobs:
       - name: Build the pinned native publisher without shared caches
         working-directory: clawsweeper
         shell: bash
+        env:
+          ENGINE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+          test "$(git rev-parse HEAD)" = "$ENGINE_SHA"
           git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
           corepack enable
           corepack prepare pnpm@11.10.0 --activate
@@ -540,6 +546,8 @@ jobs:
       - name: Validate the artifact against trusted admission outputs
         working-directory: clawsweeper
         shell: bash
+        env:
+          ENGINE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
           decision="$(jq -nc \
@@ -551,7 +559,7 @@ jobs:
             --arg head_repo "$HEAD_REPO" \
             --arg head_sha "$HEAD_SHA" \
             --arg merge_base_sha "$MERGE_BASE_SHA" \
-            --arg engine_sha "$GITHUB_WORKFLOW_SHA" \
+            --arg engine_sha "$ENGINE_SHA" \
             --arg upstream_base_sha "$UPSTREAM_BASE_SHA" \
             '{target_repo:$target_repo,repository_id:($repository_id|tonumber),item_number:($item_number|tonumber),base_ref:$base_ref,base_sha:$base_sha,head_repo:$head_repo,head_sha:$head_sha,merge_base_sha:$merge_base_sha,engine_sha:$engine_sha,upstream_base_sha:$upstream_base_sha}')"
           export EXACT_REVIEW_BUNDLE_DIR="$RUNNER_TEMP/exact-review-bundle"
@@ -569,7 +577,7 @@ jobs:
           export EXACT_REVIEW_PRODUCER_JOB="review"
           export EXACT_REVIEW_PRODUCER_RUN_ID="$GITHUB_RUN_ID"
           export EXACT_REVIEW_PROTOCOL_VERSION="1"
-          export EXACT_REVIEW_SOURCE_SHA="$GITHUB_WORKFLOW_SHA"
+          export EXACT_REVIEW_SOURCE_SHA="$ENGINE_SHA"
           export EXACT_REVIEW_TARGET_BRANCH="$BASE_REF"
           export EXACT_REVIEW_TARGET_REPO="$TARGET_REPO"
           pnpm run --silent repair:exact-review-bundle validate
