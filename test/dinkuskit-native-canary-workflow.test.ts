@@ -215,6 +215,7 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
   assert.match(wrapper, /COPILOT_GITHUB_TOKEN="\$COPILOT_GITHUB_TOKEN"/);
   assert.match(wrapper, /CLAWSWEEPER_COPILOT_MODEL/);
   assert.match(wrapper, /CLAWSWEEPER_COPILOT_EFFORT/);
+  assert.match(wrapper, /CLAWSWEEPER_COPILOT_DECISION_MCP="\$CLAWSWEEPER_COPILOT_DECISION_MCP"/);
   assert.match(wrapper, /GIT_CONFIG_GLOBAL="\$CLAWSWEEPER_MODEL_GIT_CONFIG"/);
   assert.doesNotMatch(wrapper, /\bGH_TOKEN\b|\bGITHUB_TOKEN\b|OPENAI_API_KEY|APP_PRIVATE_KEY/);
   assert.match(source, /CANARY_ROOT:\s*\/opt\/dinkuskit-clawsweeper-canary/);
