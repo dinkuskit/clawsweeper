@@ -419,6 +419,35 @@ jobs:
             chmod -R go-w "$CANARY_ARTIFACTS"
           fi
 
+      - name: Report the bounded Copilot failure class
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          diagnostic="$CANARY_ARTIFACTS/codex/copilot-failure.json"
+          if [ ! -f "$diagnostic" ]; then
+            echo "::error title=ClawSweeper Copilot failure class::diagnostic_unavailable"
+            exit 0
+          fi
+          jq -e '
+            type == "object"
+            and .kind == "clawsweeper_copilot_failure"
+            and (.category | IN(
+              "authentication",
+              "copilot_access",
+              "model_access",
+              "cli_contract",
+              "response_contract",
+              "network",
+              "execution",
+              "unclassified"
+            ))
+            and ((.exit_status | type) == "number" or .exit_status == null)
+            and (keys == ["category", "exit_status", "kind"])
+          ' "$diagnostic" >/dev/null
+          failure_class="$(jq -r '.category' "$diagnostic")"
+          echo "::error title=ClawSweeper Copilot failure class::$failure_class"
+
       - name: Validate the exact native report and live tuple
         working-directory: /opt/dinkuskit-clawsweeper-canary/engine
         shell: bash

@@ -45,7 +45,10 @@ writeFileSync(process.env.FAKE_CAPTURE, JSON.stringify({
   home: process.env.COPILOT_HOME,
 }));
 if (process.env.FAKE_FAIL === "1") {
-  process.stderr.write("transport failed COPILOT_GITHUB_TOKEN=" + process.env.COPILOT_GITHUB_TOKEN);
+  process.stderr.write(
+    process.env.FAKE_ERROR ??
+      "transport failed COPILOT_GITHUB_TOKEN=" + process.env.COPILOT_GITHUB_TOKEN,
+  );
   process.exit(7);
 }
 process.stdout.write(process.env.FAKE_RESPONSE);
@@ -62,6 +65,7 @@ process.stdout.write(process.env.FAKE_RESPONSE);
     copilotHome,
     fakeCopilot,
     capture,
+    failureDiagnostic: join(codexArtifacts, "copilot-failure.json"),
     output: join(codexArtifacts, "7.json"),
     schema: join(schemas, "clawsweeper-decision.schema.json"),
   };
@@ -95,7 +99,7 @@ function codexArgs(fixture: Fixture): string[] {
 
 function runAdapter(
   fixture: Fixture,
-  options: { args?: string[]; fail?: boolean; response?: string } = {},
+  options: { args?: string[]; error?: string; fail?: boolean; response?: string } = {},
 ) {
   return spawnSync(process.execPath, [adapter, ...(options.args ?? codexArgs(fixture))], {
     cwd: fixture.target,
@@ -112,6 +116,7 @@ function runAdapter(
       CLAWSWEEPER_COPILOT_MODEL: "gpt-5.6-terra",
       CLAWSWEEPER_COPILOT_EFFORT: "high",
       FAKE_CAPTURE: fixture.capture,
+      FAKE_ERROR: options.error,
       FAKE_FAIL: options.fail ? "1" : "0",
       FAKE_RESPONSE: options.response ?? '{"decision":"keep_open"}',
     },
@@ -168,6 +173,22 @@ test("Copilot adapter accepts one optional JSON fence and normalizes the output"
   }
 });
 
+test("Copilot adapter classifies invalid model output without preserving it", () => {
+  const fixture = createFixture();
+  try {
+    const result = runAdapter(fixture, { response: "not-json private model output" });
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(readFileSync(fixture.failureDiagnostic, "utf8")), {
+      category: "response_contract",
+      exit_status: 0,
+      kind: "clawsweeper_copilot_failure",
+    });
+    assert.doesNotMatch(readFileSync(fixture.failureDiagnostic, "utf8"), /private model output/);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("Copilot adapter rejects any expansion of the Codex protocol before model execution", () => {
   const fixture = createFixture();
   try {
@@ -189,7 +210,41 @@ test("Copilot adapter redacts the credential from model failures", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /COPILOT_GITHUB_TOKEN=\[REDACTED\]/);
     assert.doesNotMatch(result.stderr, /github_pat_test_abcdefghijklmnopqrstuvwxyz123456/);
+    assert.deepEqual(JSON.parse(readFileSync(fixture.failureDiagnostic, "utf8")), {
+      category: "unclassified",
+      exit_status: 7,
+      kind: "clawsweeper_copilot_failure",
+    });
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Copilot adapter records only a bounded failure category", () => {
+  const cases = [
+    [
+      "Authentication token found but could not be validated (401): Bad credentials",
+      "authentication",
+    ],
+    ["Access denied by policy settings: Copilot subscription is unavailable", "copilot_access"],
+    ["The selected model is unavailable for this account", "model_access"],
+    ["Unknown tool supplied to --available-tools", "cli_contract"],
+    ["Request failed with ETIMEDOUT", "network"],
+  ] as const;
+
+  for (const [error, category] of cases) {
+    const fixture = createFixture();
+    try {
+      const result = runAdapter(fixture, { error, fail: true });
+      assert.equal(result.status, 1);
+      assert.deepEqual(JSON.parse(readFileSync(fixture.failureDiagnostic, "utf8")), {
+        category,
+        exit_status: 7,
+        kind: "clawsweeper_copilot_failure",
+      });
+      assert.doesNotMatch(readFileSync(fixture.failureDiagnostic, "utf8"), new RegExp(error, "i"));
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
   }
 });
