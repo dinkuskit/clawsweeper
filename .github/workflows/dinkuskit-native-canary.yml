@@ -16,11 +16,44 @@ on:
         description: Exact pull request head SHA to review
         required: true
         type: string
+      engine_sha:
+        description: Exact ClawSweeper workflow and engine commit SHA
+        required: true
+        type: string
       publish:
         description: Publish the native comment, labels, and durable state record
         required: true
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Pull request number (the first canary is restricted to blocks#7)
+        required: true
+        type: string
+      expected_base_sha:
+        description: Exact current main SHA to review against
+        required: true
+        type: string
+      expected_head_sha:
+        description: Exact pull request head SHA to review
+        required: true
+        type: string
+      engine_sha:
+        description: Exact ClawSweeper workflow and engine commit SHA
+        required: true
+        type: string
+      publish:
+        description: Publish the native comment, labels, and durable state record
+        required: true
+        type: boolean
+    secrets:
+      CLAWSWEEPER_APP_PRIVATE_KEY:
+        description: Private key for the repository-scoped DinkusKit ClawSweeper App
+        required: true
+      COPILOT_GITHUB_TOKEN:
+        description: GitHub Copilot CLI credential used only by the isolated model process
+        required: true
 
 permissions: {}
 
@@ -163,7 +196,8 @@ jobs:
       - name: Check out the trusted ClawSweeper engine
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          repository: dinkuskit/clawsweeper
+          ref: ${{ inputs.engine_sha }}
           path: clawsweeper
           fetch-depth: 0
           persist-credentials: false
@@ -176,9 +210,12 @@ jobs:
       - name: Build the pinned native engine without shared caches
         working-directory: clawsweeper
         shell: bash
+        env:
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$ENGINE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$ENGINE_SHA"
           git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
           corepack enable
           corepack prepare pnpm@11.10.0 --activate
@@ -231,46 +268,58 @@ jobs:
           chmod -R go-w "$CANARY_ENGINE"
           test -f "$CANARY_ENGINE/dist/clawsweeper.js"
           test -f "$CANARY_ENGINE/scripts/run-codex-unprivileged.sh"
+          test -f "$CANARY_ENGINE/scripts/run-copilot-codex-adapter.mjs"
 
-      - name: Set up pinned Codex through the upstream localhost proxy
-        uses: ./clawsweeper/.github/actions/setup-codex
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          CLAWSWEEPER_INTERNAL_MODEL: ${{ secrets.CLAWSWEEPER_MODEL }}
-        with:
-          cache-enabled: "false"
-          login-status: "true"
+      - name: Install the pinned GitHub Copilot CLI without shared caches
+        shell: bash
+        run: |
+          set -euo pipefail
+          copilot_prefix="$RUNNER_TEMP/copilot-prefix"
+          npm install \
+            --prefix "$copilot_prefix" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            --package-lock=false \
+            @github/copilot@1.0.73 \
+            detect-libc@2.1.2
+          test "$(node -p "require('$copilot_prefix/node_modules/@github/copilot/package.json').version")" = "1.0.73"
+          test "$(node -p "require('$copilot_prefix/node_modules/detect-libc/package.json').version")" = "2.1.2"
+          test -x "$copilot_prefix/node_modules/.bin/copilot"
+          test "$($copilot_prefix/node_modules/.bin/copilot --version)" = "1.0.73"
+          echo "CLAWSWEEPER_COPILOT_PREFIX=$copilot_prefix" >> "$GITHUB_ENV"
 
-      - name: Prepare the unprivileged Codex runtime
+      - name: Prepare the unprivileged Copilot runtime
         shell: bash
         run: |
           set -euo pipefail
           model_user="clawsweeper-model"
           share_group="clawsweeper-share"
           model_home="$CANARY_ROOT/model-home"
-          model_codex_home="$model_home/.codex"
-          model_runtime="$CANARY_ROOT/codex-runtime"
+          model_copilot_home="$model_home/.copilot"
+          model_tmp="$model_home/tmp"
+          model_runtime="$CANARY_ROOT/copilot-runtime"
           model_bin="$CANARY_ROOT/model-bin"
           model_git_config="$CANARY_ROOT/model-gitconfig"
           node_bin_dir="$(dirname "$(command -v node)")"
-          codex_prefix="$(dirname "$(dirname "$(command -v codex)")")"
 
           sudo addgroup --system "$share_group"
           sudo adduser --system --no-create-home --home "$model_home" \
             --shell /bin/bash --group "$model_user"
           sudo usermod --append --groups "$share_group" "$model_user"
           sudo install -d -o "$model_user" -g "$model_user" -m 0700 \
-            "$model_home" "$model_codex_home"
-          sudo install -o "$model_user" -g "$model_user" -m 0600 \
-            "$CODEX_HOME/config.toml" "$model_codex_home/config.toml"
+            "$model_home" "$model_copilot_home" "$model_tmp"
 
           sudo install -d -o root -g root -m 0755 "$model_runtime" "$model_bin"
-          sudo cp -a "$codex_prefix/." "$model_runtime/"
+          sudo cp -a "$CLAWSWEEPER_COPILOT_PREFIX/." "$model_runtime/"
           sudo chown -R root:root "$model_runtime"
           sudo chmod -R a-w "$model_runtime"
           sudo install -o root -g root -m 0555 \
             "$GITHUB_WORKSPACE/clawsweeper/scripts/run-codex-unprivileged.sh" \
             "$model_bin/codex"
+          sudo install -o root -g root -m 0555 \
+            "$GITHUB_WORKSPACE/clawsweeper/scripts/run-copilot-codex-adapter.mjs" \
+            "$model_runtime/run-copilot-codex-adapter.mjs"
           sudo install -o root -g root -m 0600 /dev/null "$model_git_config"
           sudo git config --file "$model_git_config" --add safe.directory "$CANARY_TARGET"
           sudo chmod 0444 "$model_git_config"
@@ -288,10 +337,16 @@ jobs:
           {
             echo "CLAWSWEEPER_MODEL_USER=$model_user"
             echo "CLAWSWEEPER_MODEL_HOME=$model_home"
-            echo "CLAWSWEEPER_MODEL_CODEX_HOME=$model_codex_home"
             echo "CLAWSWEEPER_MODEL_GIT_CONFIG=$model_git_config"
             echo "CLAWSWEEPER_MODEL_PATH=$node_bin_dir:/usr/local/bin:/usr/bin:/bin"
-            echo "CLAWSWEEPER_REAL_CODEX=$model_runtime/bin/codex"
+            echo "CLAWSWEEPER_COPILOT_HOME=$model_copilot_home"
+            echo "CLAWSWEEPER_COPILOT_MODEL=gpt-5.6-terra"
+            echo "CLAWSWEEPER_COPILOT_EFFORT=high"
+            echo "CLAWSWEEPER_REAL_CODEX=$model_runtime/run-copilot-codex-adapter.mjs"
+            echo "CLAWSWEEPER_REAL_COPILOT=$model_runtime/node_modules/.bin/copilot"
+            echo "CLAWSWEEPER_ADAPTER_TARGET_DIR=$CANARY_TARGET"
+            echo "CLAWSWEEPER_ADAPTER_ARTIFACT_DIR=$CANARY_ARTIFACTS"
+            echo "CLAWSWEEPER_ADAPTER_SCHEMA_DIR=$CANARY_ENGINE/schema"
             echo "CLAWSWEEPER_SHARE_GROUP=$share_group"
           } >> "$GITHUB_ENV"
 
@@ -313,6 +368,7 @@ jobs:
         working-directory: /opt/dinkuskit-clawsweeper-canary/engine
         shell: bash
         env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GIT_ATTR_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
           GIT_CONFIG_NOSYSTEM: "1"
@@ -335,9 +391,10 @@ jobs:
             --artifact-dir "$CANARY_ARTIFACTS" \
             --batch-size 1 \
             --max-pages 5 \
-            --codex-model internal \
+            --codex-model gpt-5.6-terra \
             --codex-reasoning-effort high \
             --codex-sandbox read-only \
+            --codex-service-tier default \
             --codex-timeout-ms 1200000 \
             --item-number "$PR_NUMBER" \
             --readonly-openclaw \
@@ -390,6 +447,8 @@ jobs:
       - name: Create the bounded native review bundle
         working-directory: /opt/dinkuskit-clawsweeper-canary/engine
         shell: bash
+        env:
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
           decision="$(jq -nc \
@@ -401,7 +460,7 @@ jobs:
             --arg head_repo "$HEAD_REPO" \
             --arg head_sha "$HEAD_SHA" \
             --arg merge_base_sha "$MERGE_BASE_SHA" \
-            --arg engine_sha "$GITHUB_SHA" \
+            --arg engine_sha "$ENGINE_SHA" \
             --arg upstream_base_sha "$UPSTREAM_BASE_SHA" \
             '{target_repo:$target_repo,repository_id:($repository_id|tonumber),item_number:($item_number|tonumber),base_ref:$base_ref,base_sha:$base_sha,head_repo:$head_repo,head_sha:$head_sha,merge_base_sha:$merge_base_sha,engine_sha:$engine_sha,upstream_base_sha:$upstream_base_sha}')"
           export EXACT_REVIEW_ACTION_LEDGER_ROOT=""
@@ -420,7 +479,7 @@ jobs:
           export EXACT_REVIEW_PRODUCER_JOB="review"
           export EXACT_REVIEW_PROTOCOL_VERSION="1"
           export EXACT_REVIEW_REPORT_PATH="$CANARY_ARTIFACTS/$PR_NUMBER.md"
-          export EXACT_REVIEW_SOURCE_SHA="$GITHUB_SHA"
+          export EXACT_REVIEW_SOURCE_SHA="$ENGINE_SHA"
           export EXACT_REVIEW_TARGET_BRANCH="$BASE_REF"
           export EXACT_REVIEW_TARGET_REPO="$TARGET_REPO"
           pnpm run --silent repair:exact-review-bundle create
@@ -461,7 +520,8 @@ jobs:
       - name: Check out the trusted ClawSweeper publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          repository: dinkuskit/clawsweeper
+          ref: ${{ inputs.engine_sha }}
           path: clawsweeper
           fetch-depth: 0
           persist-credentials: false
@@ -474,9 +534,12 @@ jobs:
       - name: Build the pinned native publisher without shared caches
         working-directory: clawsweeper
         shell: bash
+        env:
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$ENGINE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$ENGINE_SHA"
           git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
           corepack enable
           corepack prepare pnpm@11.10.0 --activate
@@ -493,6 +556,8 @@ jobs:
       - name: Validate the artifact against trusted admission outputs
         working-directory: clawsweeper
         shell: bash
+        env:
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
           decision="$(jq -nc \
@@ -504,7 +569,7 @@ jobs:
             --arg head_repo "$HEAD_REPO" \
             --arg head_sha "$HEAD_SHA" \
             --arg merge_base_sha "$MERGE_BASE_SHA" \
-            --arg engine_sha "$GITHUB_SHA" \
+            --arg engine_sha "$ENGINE_SHA" \
             --arg upstream_base_sha "$UPSTREAM_BASE_SHA" \
             '{target_repo:$target_repo,repository_id:($repository_id|tonumber),item_number:($item_number|tonumber),base_ref:$base_ref,base_sha:$base_sha,head_repo:$head_repo,head_sha:$head_sha,merge_base_sha:$merge_base_sha,engine_sha:$engine_sha,upstream_base_sha:$upstream_base_sha}')"
           export EXACT_REVIEW_BUNDLE_DIR="$RUNNER_TEMP/exact-review-bundle"
@@ -522,7 +587,7 @@ jobs:
           export EXACT_REVIEW_PRODUCER_JOB="review"
           export EXACT_REVIEW_PRODUCER_RUN_ID="$GITHUB_RUN_ID"
           export EXACT_REVIEW_PROTOCOL_VERSION="1"
-          export EXACT_REVIEW_SOURCE_SHA="$GITHUB_SHA"
+          export EXACT_REVIEW_SOURCE_SHA="$ENGINE_SHA"
           export EXACT_REVIEW_TARGET_BRANCH="$BASE_REF"
           export EXACT_REVIEW_TARGET_REPO="$TARGET_REPO"
           pnpm run --silent repair:exact-review-bundle validate

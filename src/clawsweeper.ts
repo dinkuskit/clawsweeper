@@ -10224,11 +10224,11 @@ function redactedOutputTail(value: string | Buffer | null | undefined, maxLength
       .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[REDACTED_GITHUB_TOKEN]")
       .replace(/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, "[REDACTED_GITHUB_TOKEN]")
       .replace(
-        /\b(OPENAI_API_KEY|CODEX_API_KEY|CODEX_ACCESS_TOKEN|GH_TOKEN|GITHUB_TOKEN)=([^\s"']+)/g,
+        /\b(OPENAI_API_KEY|CODEX_API_KEY|CODEX_ACCESS_TOKEN|COPILOT_GITHUB_TOKEN|GH_TOKEN|GITHUB_TOKEN)=([^\s"']+)/g,
         "$1=[REDACTED]",
       )
       .replace(
-        /"((?:OPENAI_API_KEY|CODEX_API_KEY|CODEX_ACCESS_TOKEN|GH_TOKEN|GITHUB_TOKEN))"\s*:\s*"[^"]*"/g,
+        /"((?:OPENAI_API_KEY|CODEX_API_KEY|CODEX_ACCESS_TOKEN|COPILOT_GITHUB_TOKEN|GH_TOKEN|GITHUB_TOKEN))"\s*:\s*"[^"]*"/g,
         '"$1":"[REDACTED]"',
       ),
   );

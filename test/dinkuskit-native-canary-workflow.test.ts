@@ -45,8 +45,10 @@ function step(jobName: string, name: string): Step {
   return value;
 }
 
-test("DinkusKit canary is manual-only and exact-target scoped", () => {
-  assert.deepEqual(Object.keys(workflow.on ?? {}), ["workflow_dispatch"]);
+test("DinkusKit canary is manual or explicitly reusable and exact-target scoped", () => {
+  assert.deepEqual(Object.keys(workflow.on ?? {}), ["workflow_dispatch", "workflow_call"]);
+  assert.match(source, /workflow_call:[\s\S]*COPILOT_GITHUB_TOKEN:[\s\S]*required: true/);
+  assert.match(source, /workflow_call:[\s\S]*CLAWSWEEPER_APP_PRIVATE_KEY:[\s\S]*required: true/);
   assert.deepEqual(workflow.permissions, {});
   assert.equal(workflow.env?.TARGET_REPO, "dinkuskit/blocks");
   assert.equal(workflow.env?.TARGET_REPOSITORY_ID, "1306882611");
@@ -57,24 +59,28 @@ test("DinkusKit canary is manual-only and exact-target scoped", () => {
   assert.match(source, /expected_head_sha must be a lowercase 40-character SHA/);
 });
 
-test("review and publisher keep model and write credentials in separate steps and jobs", () => {
+test("review and publisher keep Copilot and write credentials in separate steps and jobs", () => {
   const review = jobSource("review");
   const publish = jobSource("publish");
   const runReview = JSON.stringify(step("review", "Run the native ClawSweeper review"));
   assert.deepEqual(job("review").permissions, { contents: "read" });
-  assert.match(review, /setup-codex/);
-  assert.match(review, /OPENAI_API_KEY/);
-  assert.match(review, /CLAWSWEEPER_MODEL/);
+  assert.match(review, /@github\/copilot@1\.0\.73/);
+  assert.match(review, /detect-libc@2\.1\.2/);
+  assert.match(review, /COPILOT_GITHUB_TOKEN/);
+  assert.match(review, /gpt-5\.6-terra/);
+  assert.match(review, /CLAWSWEEPER_COPILOT_EFFORT=high/);
+  assert.doesNotMatch(review, /OPENAI_API_KEY|setup-codex|CLAWSWEEPER_INTERNAL_MODEL/);
   assert.match(review, /create-github-app-token/);
   assert.doesNotMatch(runReview, /CLAWSWEEPER_APP_PRIVATE_KEY/);
-  assert.doesNotMatch(runReview, /OPENAI_API_KEY/);
   assert.doesNotMatch(runReview, /CLAWSWEEPER_PROOF_INSPECTION_TOKEN/);
+  assert.match(runReview, /COPILOT_GITHUB_TOKEN/);
   assert.match(runReview, /steps\.review-token\.outputs\.token/);
   assert.match(publish, /CLAWSWEEPER_APP_PRIVATE_KEY/);
   assert.match(publish, /create-github-app-token/);
-  assert.doesNotMatch(publish, /OPENAI_API_KEY/);
-  assert.doesNotMatch(publish, /CLAWSWEEPER_MODEL/);
-  assert.doesNotMatch(publish, /setup-codex/);
+  assert.doesNotMatch(
+    publish,
+    /OPENAI_API_KEY|COPILOT_GITHUB_TOKEN|CLAWSWEEPER_COPILOT|setup-codex/,
+  );
   assert.equal(job("publish").if, "${{ inputs.publish }}");
 });
 
@@ -85,6 +91,10 @@ test("canary invokes native review and comment-only apply without workflow-autho
   assert.match(review, /--local-only/);
   assert.match(review, /--readonly-openclaw/);
   assert.match(review, /--codex-sandbox read-only/);
+  assert.match(review, /--codex-model gpt-5\.6-terra/);
+  assert.match(review, /--codex-reasoning-effort high/);
+  assert.match(review, /--codex-service-tier default/);
+  assert.doesNotMatch(review, /--codex-service-tier fast/);
   assert.match(review, /--codex-timeout-ms 1200000/);
   assert.match(review, /--disable-media-proof-preprocessing/);
   assert.match(review, /validate-dinkuskit-canary-report/);
@@ -169,8 +179,8 @@ test("cross-repository reads use narrow App tokens instead of the control GITHUB
   assert.doesNotMatch(source, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
 });
 
-test("Codex runs through a credential-empty unprivileged wrapper", () => {
-  const prepare = JSON.stringify(step("review", "Prepare the unprivileged Codex runtime"));
+test("Copilot runs through a token-minimal unprivileged wrapper", () => {
+  const prepare = JSON.stringify(step("review", "Prepare the unprivileged Copilot runtime"));
   const revoke = JSON.stringify(step("review", "Revoke model runtime write access"));
   const wrapper = readFileSync("scripts/run-codex-unprivileged.sh", "utf8");
   assert.match(prepare, /adduser --system/);
@@ -187,8 +197,11 @@ test("Codex runs through a credential-empty unprivileged wrapper", () => {
   assert.match(wrapper, /sudo --non-interactive --set-home --user=/);
   assert.match(wrapper, /\/usr\/bin\/env -i/);
   assert.match(wrapper, /CLAWSWEEPER_PROOF_SCRATCH_DIR/);
+  assert.match(wrapper, /COPILOT_GITHUB_TOKEN="\$COPILOT_GITHUB_TOKEN"/);
+  assert.match(wrapper, /CLAWSWEEPER_COPILOT_MODEL/);
+  assert.match(wrapper, /CLAWSWEEPER_COPILOT_EFFORT/);
   assert.match(wrapper, /GIT_CONFIG_GLOBAL="\$CLAWSWEEPER_MODEL_GIT_CONFIG"/);
-  assert.doesNotMatch(wrapper, /GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|APP_PRIVATE_KEY/);
+  assert.doesNotMatch(wrapper, /\bGH_TOKEN\b|\bGITHUB_TOKEN\b|OPENAI_API_KEY|APP_PRIVATE_KEY/);
   assert.match(source, /CANARY_ROOT:\s*\/opt\/dinkuskit-clawsweeper-canary/);
   assert.doesNotMatch(
     source,
@@ -196,16 +209,16 @@ test("Codex runs through a credential-empty unprivileged wrapper", () => {
   );
 });
 
-test("target checkout completes before any API-key proxy exists and ignores ambient Git config", () => {
+test("target checkout completes before Copilot installation and ignores ambient Git config", () => {
   const steps = job("review").steps ?? [];
   const checkoutIndex = steps.findIndex(
     (candidate) => candidate.name === "Prepare the exact target checkout as read-only data",
   );
-  const proxyIndex = steps.findIndex(
-    (candidate) => candidate.name === "Set up pinned Codex through the upstream localhost proxy",
+  const copilotIndex = steps.findIndex(
+    (candidate) => candidate.name === "Install the pinned GitHub Copilot CLI without shared caches",
   );
   assert.ok(checkoutIndex >= 0);
-  assert.ok(proxyIndex > checkoutIndex);
+  assert.ok(copilotIndex > checkoutIndex);
 
   const hardenedKeys = [
     "GIT_CONFIG_NOSYSTEM",
@@ -229,6 +242,23 @@ test("target checkout completes before any API-key proxy exists and ignores ambi
   assert.match(wrapper, /GIT_CONFIG_GLOBAL="\$CLAWSWEEPER_MODEL_GIT_CONFIG"/);
   assert.match(wrapper, /GIT_ATTR_NOSYSTEM=1/);
   assert.match(wrapper, /GIT_TERMINAL_PROMPT=0/);
+});
+
+test("reusable jobs check out and bind the explicit immutable engine commit", () => {
+  for (const stepName of [
+    "Check out the trusted ClawSweeper engine",
+    "Check out the trusted ClawSweeper publisher",
+  ]) {
+    const jobName = stepName.includes("engine") ? "review" : "publish";
+    const checkout = step(jobName, stepName);
+    assert.equal(checkout.with?.repository, "dinkuskit/clawsweeper");
+    assert.equal(checkout.with?.ref, "${{ inputs.engine_sha }}");
+  }
+  assert.match(source, /engine_sha:[\s\S]*required: true/);
+  assert.match(source, /ENGINE_SHA: \$\{\{ inputs\.engine_sha \}\}/);
+  assert.match(source, /\[\[ "\$ENGINE_SHA" =~ \^\[0-9a-f\]\{40\}\$ \]\]/);
+  assert.match(source, /EXACT_REVIEW_SOURCE_SHA="\$ENGINE_SHA"/);
+  assert.doesNotMatch(source, /GITHUB_(?:WORKFLOW_)?SHA|github\.sha|job\.workflow_/);
 });
 
 test("public canary disables trusted-host media preprocessing in the native engine", () => {
