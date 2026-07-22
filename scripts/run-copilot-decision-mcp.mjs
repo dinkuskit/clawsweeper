@@ -30,6 +30,13 @@ function respondError(id, code, message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
 }
 
+function respondToolError(id, message) {
+  respond(id, {
+    content: [{ type: "text", text: message }],
+    isError: true,
+  });
+}
+
 const argv = process.argv.slice(2);
 if (argv.length !== 3) terminate("expected the exact schema, response, and validator paths");
 const [configuredSchemaPath, responsePath, configuredValidatorPath] = argv;
@@ -152,28 +159,27 @@ function handleMessage(message) {
     }
     submissionAttempts += 1;
     if (submissionAttempts > MAX_SUBMISSION_ATTEMPTS) {
-      respondError(id, -32600, "the bounded native review submission budget was exhausted");
+      respondToolError(id, "The bounded native review submission budget was exhausted.");
       return;
     }
     const decision = params?.arguments;
     if (!decision || typeof decision !== "object" || Array.isArray(decision)) {
-      respondError(id, -32602, "submit_review requires one decision object");
+      respondToolError(id, "submit_review requires one decision object.");
       return;
     }
     let validatedDecision;
     try {
       validatedDecision = parseDecision(decision);
     } catch (error) {
-      respondError(
+      respondToolError(
         id,
-        -32602,
-        `native validation rejected the submission: ${boundedValidationMessage(error)}`,
+        `Native validation rejected the submission: ${boundedValidationMessage(error)}. Correct that invariant and retry submit_review.`,
       );
       return;
     }
     const payload = `${JSON.stringify(validatedDecision)}\n`;
     if (Buffer.byteLength(payload) > MAX_RESPONSE_BYTES) {
-      respondError(id, -32602, "the native review exceeded its bounded size");
+      respondToolError(id, "The native review exceeded its bounded size.");
       return;
     }
     let responseFd;

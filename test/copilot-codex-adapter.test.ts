@@ -132,10 +132,12 @@ function runAdapter(
     error?: string;
     fail?: boolean;
     input?: string;
-    fileResponse?: string;
+    fileResponse?: string | null;
     response?: string;
   } = {},
 ) {
+  const fileResponse =
+    options.fileResponse === undefined ? '{"decision":"keep_open"}' : options.fileResponse;
   return spawnSync(process.execPath, [adapter, ...(options.args ?? codexArgs(fixture))], {
     cwd: fixture.target,
     env: {
@@ -154,9 +156,9 @@ function runAdapter(
       FAKE_CAPTURE: fixture.capture,
       FAKE_ERROR: options.error,
       FAKE_FAIL: options.fail ? "1" : "0",
-      FAKE_FILE_RESPONSE: options.fileResponse ?? "",
+      FAKE_FILE_RESPONSE: fileResponse ?? "",
       FAKE_RESPONSE: options.response ?? '{"decision":"keep_open"}',
-      FAKE_WRITE_RESPONSE: options.fileResponse === undefined ? "0" : "1",
+      FAKE_WRITE_RESPONSE: fileResponse === null ? "0" : "1",
     },
     input: options.input ?? "Review the admitted pull request.",
     encoding: "utf8",
@@ -292,6 +294,7 @@ test("decision MCP exposes the native schema and records one bounded tool submis
       result: {
         tools?: Array<{ name: string; inputSchema: unknown }>;
         content?: Array<{ type: string; text: string }>;
+        isError?: boolean;
       };
       error?: { code: number; message: string };
     }>;
@@ -301,8 +304,11 @@ test("decision MCP exposes the native schema and records one bounded tool submis
     );
     assert.equal(messages[1]?.result.tools?.[0]?.name, "submit_review");
     assert.deepEqual(messages[1]?.result.tools?.[0]?.inputSchema, JSON.parse(nativeSchema));
-    assert.equal(messages[2]?.error?.code, -32602);
-    assert.match(messages[2]?.error?.message ?? "", /decision\.decision has invalid value/);
+    assert.equal(messages[2]?.result.isError, true);
+    assert.match(
+      messages[2]?.result.content?.[0]?.text ?? "",
+      /decision\.decision has invalid value/,
+    );
     assert.deepEqual(messages[3]?.result.content, [
       { type: "text", text: "Native ClawSweeper review accepted." },
     ]);
@@ -335,34 +341,30 @@ test("Copilot adapter keeps oversized native requests out of the process argumen
   }
 });
 
-test("Copilot adapter accepts one JSON object wrapped in prose or a fence", () => {
+test("Copilot adapter rejects stdout JSON when the native tool was not accepted", () => {
   const fixture = createFixture();
   try {
     const result = runAdapter(fixture, {
+      fileResponse: null,
       response: 'Completed the review.\n```json\n{"decision":"keep_open"}\n```\n',
     });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(fixture.output, "utf8"), '{"decision":"keep_open"}\n');
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(readFileSync(fixture.failureDiagnostic, "utf8")), {
+      category: "response_contract",
+      exit_status: 0,
+      kind: "clawsweeper_copilot_failure",
+    });
+    assert.equal(existsSync(fixture.output), false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
-test("Copilot adapter accepts one inline JSON object and rejects ambiguous objects", () => {
-  const acceptedFixture = createFixture();
-  try {
-    const result = runAdapter(acceptedFixture, {
-      response: 'Native decision: {"decision":"keep_open"} end.',
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(acceptedFixture.output, "utf8"), '{"decision":"keep_open"}\n');
-  } finally {
-    rmSync(acceptedFixture.root, { recursive: true, force: true });
-  }
-
+test("Copilot adapter rejects ambiguous stdout without preserving it", () => {
   const rejectedFixture = createFixture();
   try {
     const result = runAdapter(rejectedFixture, {
+      fileResponse: null,
       response: '{"decision":"keep_open"}\n{"decision":"close"}',
     });
     assert.equal(result.status, 1);
@@ -380,7 +382,10 @@ test("Copilot adapter accepts one inline JSON object and rejects ambiguous objec
 test("Copilot adapter classifies invalid model output without preserving it", () => {
   const fixture = createFixture();
   try {
-    const result = runAdapter(fixture, { response: "not-json private model output" });
+    const result = runAdapter(fixture, {
+      fileResponse: null,
+      response: "not-json private model output",
+    });
     assert.equal(result.status, 1);
     assert.deepEqual(JSON.parse(readFileSync(fixture.failureDiagnostic, "utf8")), {
       category: "response_contract",

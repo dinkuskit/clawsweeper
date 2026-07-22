@@ -94,44 +94,6 @@ function parseObjectCandidate(value) {
   }
 }
 
-function extractSingleJsonObject(value) {
-  const direct = parseObjectCandidate(value);
-  if (direct) return direct;
-
-  const candidates = [];
-  let start = -1;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (start < 0) {
-      if (character === "{") {
-        start = index;
-        depth = 1;
-      }
-      continue;
-    }
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') inString = true;
-    else if (character === "{") depth += 1;
-    else if (character === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        const parsed = parseObjectCandidate(value.slice(start, index + 1));
-        if (parsed) candidates.push(parsed);
-        start = -1;
-      }
-    }
-  }
-  return candidates.length === 1 ? candidates[0] : null;
-}
-
 function sanitize(value) {
   let safe = String(value ?? "");
   const token = process.env.COPILOT_GITHUB_TOKEN;
@@ -432,46 +394,48 @@ if (Buffer.byteLength(result.stdout ?? "") > MAX_RESPONSE_BYTES) {
   );
   fail("Copilot CLI exceeded the bounded response contract", 1);
 }
-let response = result.stdout ?? "";
-if (existsSync(responsePath)) {
-  let responseFd;
-  try {
-    responseFd = openSync(responsePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const responseStats = fstatSync(responseFd);
-    if (!responseStats.isFile() || responseStats.size > MAX_RESPONSE_BYTES) {
-      throw new Error("invalid bounded response file");
-    }
-    response = readFileSync(responseFd, "utf8");
-  } catch {
-    try {
-      unlinkSync(responsePath);
-    } catch {
-      // The bounded response failure remains authoritative.
-    }
-    recordCopilotFailure(
-      "Copilot CLI wrote an invalid bounded response file",
-      0,
-      "response_contract",
-    );
-    fail("Copilot CLI wrote an invalid bounded response file", 1);
-  } finally {
-    if (responseFd !== undefined) closeSync(responseFd);
-  }
-  try {
-    unlinkSync(responsePath);
-  } catch {
-    // The parsed response remains authoritative; the workflow revokes the scratch tree.
-  }
-}
-const decision = extractSingleJsonObject(response);
-if (!decision) {
+if (!existsSync(responsePath)) {
   if (result.status !== 0) {
     recordCopilotFailure(result.stderr, result.status);
     const detail = sanitize(result.stderr).slice(-MAX_ERROR_BYTES).trim();
     fail(`Copilot CLI exited with status ${result.status}${detail ? `: ${detail}` : ""}`, 1);
   }
-  recordCopilotFailure("Copilot CLI returned invalid JSON", 0, "response_contract");
-  fail("Copilot CLI did not return one unambiguous JSON object", 1);
+  recordCopilotFailure("Copilot CLI did not submit a native review", 0, "response_contract");
+  fail("Copilot CLI did not submit through the native ClawSweeper tool", 1);
+}
+let responseFd;
+let response;
+try {
+  responseFd = openSync(responsePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const responseStats = fstatSync(responseFd);
+  if (!responseStats.isFile() || responseStats.size > MAX_RESPONSE_BYTES) {
+    throw new Error("invalid bounded response file");
+  }
+  response = readFileSync(responseFd, "utf8");
+} catch {
+  try {
+    unlinkSync(responsePath);
+  } catch {
+    // The bounded response failure remains authoritative.
+  }
+  recordCopilotFailure(
+    "Copilot CLI wrote an invalid bounded response file",
+    0,
+    "response_contract",
+  );
+  fail("Copilot CLI wrote an invalid bounded response file", 1);
+} finally {
+  if (responseFd !== undefined) closeSync(responseFd);
+}
+try {
+  unlinkSync(responsePath);
+} catch {
+  // The parsed response remains authoritative; the workflow revokes the scratch tree.
+}
+const decision = parseObjectCandidate(response);
+if (!decision) {
+  recordCopilotFailure("Copilot CLI submitted invalid JSON", 0, "response_contract");
+  fail("Copilot CLI did not submit one exact JSON object", 1);
 }
 try {
   const fd = openSync(
