@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -174,6 +175,7 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     assert.deepEqual(JSON.parse(readFileSync(fixture.output, "utf8")), {
       decision: "keep_open",
     });
+    assert.equal(statSync(fixture.output).mode & 0o777, 0o444);
     assert.deepEqual(JSON.parse(readFileSync(fixture.adapterStatus, "utf8")), {
       kind: "clawsweeper_copilot_adapter",
       status: "accepted",

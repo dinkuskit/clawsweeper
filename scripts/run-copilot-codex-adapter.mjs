@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
   constants as fsConstants,
   existsSync,
+  fchmodSync,
   fstatSync,
   openSync,
   readFileSync,
@@ -459,6 +460,7 @@ try {
     0o600,
   );
   writeFileSync(fd, `${JSON.stringify(decision)}\n`, "utf8");
+  fchmodSync(fd, 0o444);
   closeSync(fd);
   recordCopilotAcceptance();
 } catch {
