@@ -252,6 +252,7 @@ function parseCodexInvocation(args) {
 }
 
 const copilotBin = absoluteExistingPath("CLAWSWEEPER_REAL_COPILOT", "file");
+const decisionMcpBin = absoluteExistingPath("CLAWSWEEPER_COPILOT_DECISION_MCP", "file");
 const targetRoot = absoluteExistingPath("CLAWSWEEPER_ADAPTER_TARGET_DIR", "directory");
 const artifactRoot = absoluteExistingPath("CLAWSWEEPER_ADAPTER_ARTIFACT_DIR", "directory");
 const schemaRoot = absoluteExistingPath("CLAWSWEEPER_ADAPTER_SCHEMA_DIR", "directory");
@@ -304,7 +305,7 @@ const prompt = readBoundedStdin();
 if (!prompt.trim()) fail("the review prompt was empty");
 const schema = readFileSync(schemaPath, "utf8");
 if (Buffer.byteLength(schema) > MAX_SCHEMA_BYTES) fail("the decision schema exceeded its bound");
-const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nReturn exactly one JSON object and no prose or Markdown fence. The object must satisfy this JSON Schema exactly:\n\n${schema}\n`;
+const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nAfter completing the review, call the ClawSweeper submit_review tool exactly once. Its arguments must satisfy the native decision schema exposed by that tool. This tool call is the only accepted response.\n`;
 
 // Linux rejects any single argv entry larger than MAX_ARG_STRLEN (normally 128 KiB),
 // even when the aggregate ARG_MAX limit is larger. A native ClawSweeper prompt plus
@@ -332,10 +333,9 @@ try {
 const bootstrapPrompt = [
   "Perform the ClawSweeper review from the complete request in this admitted read-only file:",
   requestPath,
-  "Use the view tool repeatedly until you have read the entire file, including the response schema.",
-  "Follow that request exactly, then use the create tool to write only the required JSON object to:",
-  responsePath,
-  "Do not create or modify any other file. Do not finish until the response file exists.",
+  "Use the view tool repeatedly until you have read the entire file, including the response requirements.",
+  "Follow that request exactly, then call the ClawSweeper submit_review tool exactly once.",
+  "Do not finish until that tool confirms the native review was accepted.",
 ].join("\n");
 if (Buffer.byteLength(bootstrapPrompt) > MAX_BOOTSTRAP_PROMPT_BYTES) {
   try {
@@ -347,6 +347,17 @@ if (Buffer.byteLength(bootstrapPrompt) > MAX_BOOTSTRAP_PROMPT_BYTES) {
   fail("the Copilot bootstrap prompt exceeded its bound", 1);
 }
 
+const additionalMcpConfig = JSON.stringify({
+  mcpServers: {
+    ClawSweeper: {
+      type: "local",
+      command: process.execPath,
+      args: [decisionMcpBin, schemaPath, responsePath],
+      env: {},
+      tools: ["submit_review"],
+    },
+  },
+});
 const copilotArgs = [
   `--model=${configuredModel}`,
   `--effort=${configuredEffort}`,
@@ -360,9 +371,10 @@ const copilotArgs = [
   "--no-remote-export",
   "--disable-builtin-mcps",
   "--disallow-temp-dir",
-  "--available-tools=view,glob,grep,create",
+  `--additional-mcp-config=${additionalMcpConfig}`,
+  "--available-tools=view,glob,grep,ClawSweeper-submit_review",
   "--allow-tool=view,glob,grep",
-  `--allow-tool=write(${responsePath})`,
+  "--allow-tool=ClawSweeper(submit_review)",
   "--secret-env-vars=COPILOT_GITHUB_TOKEN",
   "--max-ai-credits=50",
   "--stream=off",

@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 const adapter = resolve("scripts/run-copilot-codex-adapter.mjs");
+const decisionMcp = resolve("scripts/run-copilot-decision-mcp.mjs");
 const nativeSchema = readFileSync("schema/clawsweeper-decision.schema.json", "utf8");
 
 type Fixture = ReturnType<typeof createFixture>;
@@ -42,13 +43,17 @@ const args = process.argv.slice(2);
 const promptIndex = args.indexOf("-p");
 const prompt = promptIndex >= 0 ? args[promptIndex + 1] : null;
 const requestPath = prompt?.split("\\n")[1] ?? null;
-const responsePermission = args.find((arg) => arg.startsWith("--allow-tool=write("));
-const responsePath = responsePermission?.slice("--allow-tool=write(".length, -1) ?? null;
+const mcpConfigArgument = args.find((arg) => arg.startsWith("--additional-mcp-config="));
+const mcpConfig = mcpConfigArgument
+  ? JSON.parse(mcpConfigArgument.slice("--additional-mcp-config=".length))
+  : null;
+const responsePath = mcpConfig?.mcpServers?.ClawSweeper?.args?.[2] ?? null;
 writeFileSync(process.env.FAKE_CAPTURE, JSON.stringify({
   args,
   prompt,
   requestPath,
   responsePath,
+  mcpConfig,
   request: requestPath ? readFileSync(requestPath, "utf8") : null,
   home: process.env.COPILOT_HOME,
 }));
@@ -126,6 +131,7 @@ function runAdapter(
       HOME: fixture.home,
       COPILOT_GITHUB_TOKEN: "github_pat_test_abcdefghijklmnopqrstuvwxyz123456",
       CLAWSWEEPER_REAL_COPILOT: fixture.fakeCopilot,
+      CLAWSWEEPER_COPILOT_DECISION_MCP: decisionMcp,
       CLAWSWEEPER_ADAPTER_TARGET_DIR: fixture.target,
       CLAWSWEEPER_ADAPTER_ARTIFACT_DIR: fixture.artifacts,
       CLAWSWEEPER_ADAPTER_SCHEMA_DIR: fixture.schemas,
@@ -158,14 +164,25 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
       prompt: string;
       requestPath: string;
       responsePath: string;
+      mcpConfig: {
+        mcpServers: {
+          ClawSweeper: {
+            type: string;
+            command: string;
+            args: string[];
+            env: Record<string, never>;
+            tools: string[];
+          };
+        };
+      };
       request: string;
       home: string;
     };
     assert.ok(capture.args.includes("--model=gpt-5.6-terra"));
     assert.ok(capture.args.includes("--effort=high"));
-    assert.ok(capture.args.includes("--available-tools=view,glob,grep,create"));
+    assert.ok(capture.args.includes("--available-tools=view,glob,grep,ClawSweeper-submit_review"));
     assert.ok(capture.args.includes("--allow-tool=view,glob,grep"));
-    assert.ok(capture.args.includes(`--allow-tool=write(${capture.responsePath})`));
+    assert.ok(capture.args.includes("--allow-tool=ClawSweeper(submit_review)"));
     assert.ok(capture.args.includes("--disable-builtin-mcps"));
     assert.ok(capture.args.includes("--disallow-temp-dir"));
     assert.ok(capture.args.includes("--secret-env-vars=COPILOT_GITHUB_TOKEN"));
@@ -173,13 +190,20 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     assert.ok(!capture.args.some((arg) => /fast/i.test(arg)));
     assert.deepEqual(
       capture.args.filter((arg) => arg.startsWith("--allow-tool")),
-      ["--allow-tool=view,glob,grep", `--allow-tool=write(${capture.responsePath})`],
+      ["--allow-tool=view,glob,grep", "--allow-tool=ClawSweeper(submit_review)"],
     );
+    assert.deepEqual(capture.mcpConfig.mcpServers.ClawSweeper, {
+      type: "local",
+      command: process.execPath,
+      args: [decisionMcp, realpathSync(fixture.schema), capture.responsePath],
+      env: {},
+      tools: ["submit_review"],
+    });
     assert.match(capture.prompt, /complete request in this admitted read-only file/);
     assert.ok(Buffer.byteLength(capture.prompt) < 4_096);
     assert.match(capture.request, /Review the admitted pull request/);
     assert.match(capture.request, /Required machine-readable response/);
-    assert.match(capture.request, /"additionalProperties": false/);
+    assert.match(capture.request, /ClawSweeper submit_review tool exactly once/);
     assert.equal(existsSync(capture.requestPath), false);
     assert.equal(existsSync(capture.responsePath), false);
     assert.equal(capture.home, realpathSync(fixture.copilotHome));
@@ -201,6 +225,57 @@ test("Copilot adapter prefers the exact path-scoped response file over chat pros
       responsePath: string;
     };
     assert.equal(existsSync(capture.responsePath), false);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("decision MCP exposes the native schema and records one bounded tool submission", () => {
+  const fixture = createFixture();
+  const responsePath = join(fixture.scratch, ".clawsweeper-copilot-response.json");
+  try {
+    const result = spawnSync(process.execPath, [decisionMcp, fixture.schema, responsePath], {
+      input: `${[
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18" },
+        },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: { name: "submit_review", arguments: { decision: "keep_open" } },
+        },
+      ]
+        .map((message) => JSON.stringify(message))
+        .join("\n")}\n`,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const messages = result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line)) as Array<{
+      id: number;
+      result: {
+        tools?: Array<{ name: string; inputSchema: unknown }>;
+        content?: Array<{ type: string; text: string }>;
+      };
+    }>;
+    assert.deepEqual(
+      messages.map((message) => message.id),
+      [1, 2, 3],
+    );
+    assert.equal(messages[1]?.result.tools?.[0]?.name, "submit_review");
+    assert.deepEqual(messages[1]?.result.tools?.[0]?.inputSchema, JSON.parse(nativeSchema));
+    assert.deepEqual(messages[2]?.result.content, [
+      { type: "text", text: "Native ClawSweeper review accepted." },
+    ]);
+    assert.equal(readFileSync(responsePath, "utf8"), '{"decision":"keep_open"}\n');
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

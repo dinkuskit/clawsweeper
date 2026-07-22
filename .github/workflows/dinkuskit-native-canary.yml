@@ -269,6 +269,7 @@ jobs:
           test -f "$CANARY_ENGINE/dist/clawsweeper.js"
           test -f "$CANARY_ENGINE/scripts/run-codex-unprivileged.sh"
           test -f "$CANARY_ENGINE/scripts/run-copilot-codex-adapter.mjs"
+          test -f "$CANARY_ENGINE/scripts/run-copilot-decision-mcp.mjs"
 
       - name: Install the pinned GitHub Copilot CLI without shared caches
         shell: bash
@@ -323,6 +324,9 @@ jobs:
           sudo install -o root -g root -m 0555 \
             "$GITHUB_WORKSPACE/clawsweeper/scripts/run-copilot-codex-adapter.mjs" \
             "$model_runtime/run-copilot-codex-adapter.mjs"
+          sudo install -o root -g root -m 0555 \
+            "$GITHUB_WORKSPACE/clawsweeper/scripts/run-copilot-decision-mcp.mjs" \
+            "$model_runtime/run-copilot-decision-mcp.mjs"
           sudo install -o root -g root -m 0600 /dev/null "$model_git_config"
           sudo git config --file "$model_git_config" --add safe.directory "$CANARY_TARGET"
           sudo chmod 0444 "$model_git_config"
@@ -347,6 +351,7 @@ jobs:
             echo "CLAWSWEEPER_COPILOT_EFFORT=high"
             echo "CLAWSWEEPER_REAL_CODEX=$model_runtime/run-copilot-codex-adapter.mjs"
             echo "CLAWSWEEPER_REAL_COPILOT=$model_runtime/node_modules/.bin/copilot"
+            echo "CLAWSWEEPER_COPILOT_DECISION_MCP=$model_runtime/run-copilot-decision-mcp.mjs"
             echo "CLAWSWEEPER_ADAPTER_TARGET_DIR=$CANARY_TARGET"
             echo "CLAWSWEEPER_ADAPTER_ARTIFACT_DIR=$CANARY_ARTIFACTS"
             echo "CLAWSWEEPER_ADAPTER_SCHEMA_DIR=$CANARY_ENGINE/schema"
