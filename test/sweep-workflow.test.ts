@@ -2685,6 +2685,7 @@ test("github activity workflow scopes cancellation to matching item activity", (
   assert.match(workflow, /Check core API budget/);
   assert.match(workflow, /CLAWSWEEPER_MIN_CORE_REMAINING/);
   assert.match(workflow, /contents: write/);
+  assert.match(workflow, /github\.repository == 'openclaw\/clawsweeper'/);
   assert.doesNotMatch(workflow, /Dispatch spam comment intake candidates/);
   assert.match(workflow, /Dispatch spam scan candidate/);
   assert.match(workflow, /repair:spam-comment-intake -- --write-report/);
