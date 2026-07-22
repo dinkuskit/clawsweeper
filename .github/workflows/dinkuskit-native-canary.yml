@@ -431,7 +431,22 @@ jobs:
           set -euo pipefail
           diagnostic="$CANARY_ARTIFACTS/codex/copilot-failure.json"
           if [ ! -f "$diagnostic" ]; then
-            echo "::error title=ClawSweeper Copilot failure class::diagnostic_unavailable"
+            adapter_status="$CANARY_ARTIFACTS/codex/copilot-adapter-status.json"
+            native_output="$CANARY_ARTIFACTS/codex/$PR_NUMBER.json"
+            if [ -f "$adapter_status" ] \
+              && jq -e '
+                type == "object"
+                and .kind == "clawsweeper_copilot_adapter"
+                and .status == "accepted"
+                and (keys == ["kind", "status"])
+              ' "$adapter_status" >/dev/null \
+              && [ -f "$native_output" ]; then
+              echo "::error title=ClawSweeper Copilot failure class::native_postprocess"
+            elif [ -f "$adapter_status" ]; then
+              echo "::error title=ClawSweeper Copilot failure class::adapter_handoff"
+            else
+              echo "::error title=ClawSweeper Copilot failure class::adapter_boundary"
+            fi
             exit 0
           fi
           jq -e '
@@ -445,7 +460,10 @@ jobs:
               "response_contract",
               "network",
               "execution",
-              "unclassified"
+              "unclassified",
+              "native_postprocess",
+              "adapter_handoff",
+              "adapter_boundary"
             ))
             and ((.exit_status | type) == "number" or .exit_status == null)
             and (keys == ["category", "exit_status", "kind"])

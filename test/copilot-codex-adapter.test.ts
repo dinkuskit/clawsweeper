@@ -92,6 +92,7 @@ process.stdout.write(process.env.FAKE_RESPONSE);
     copilotHome,
     fakeCopilot,
     capture,
+    adapterStatus: join(codexArtifacts, "copilot-adapter-status.json"),
     failureDiagnostic: join(codexArtifacts, "copilot-failure.json"),
     output: join(codexArtifacts, "7.json"),
     schema: join(schemas, "clawsweeper-decision.schema.json"),
@@ -172,6 +173,10 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(readFileSync(fixture.output, "utf8")), {
       decision: "keep_open",
+    });
+    assert.deepEqual(JSON.parse(readFileSync(fixture.adapterStatus, "utf8")), {
+      kind: "clawsweeper_copilot_adapter",
+      status: "accepted",
     });
     const capture = JSON.parse(readFileSync(fixture.capture, "utf8")) as {
       args: string[];
@@ -355,6 +360,7 @@ test("Copilot adapter rejects stdout JSON when the native tool was not accepted"
       kind: "clawsweeper_copilot_failure",
     });
     assert.equal(existsSync(fixture.output), false);
+    assert.equal(existsSync(fixture.adapterStatus), false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -374,6 +380,7 @@ test("Copilot adapter rejects ambiguous stdout without preserving it", () => {
       kind: "clawsweeper_copilot_failure",
     });
     assert.equal(existsSync(rejectedFixture.output), false);
+    assert.equal(existsSync(rejectedFixture.adapterStatus), false);
   } finally {
     rmSync(rejectedFixture.root, { recursive: true, force: true });
   }
@@ -393,6 +400,7 @@ test("Copilot adapter classifies invalid model output without preserving it", ()
       kind: "clawsweeper_copilot_failure",
     });
     assert.doesNotMatch(readFileSync(fixture.failureDiagnostic, "utf8"), /private model output/);
+    assert.equal(existsSync(fixture.adapterStatus), false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

@@ -171,6 +171,21 @@ function recordCopilotFailure(value, status, category = classifyCopilotFailure(v
   }
 }
 
+function recordCopilotAcceptance() {
+  const statusPath = join(artifactRoot, "codex", "copilot-adapter-status.json");
+  try {
+    const fd = openSync(
+      statusPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    writeFileSync(fd, '{"kind":"clawsweeper_copilot_adapter","status":"accepted"}\n', "utf8");
+    closeSync(fd);
+  } catch {
+    // The accepted native output remains authoritative when telemetry cannot be recorded.
+  }
+}
+
 function parseCodexInvocation(args) {
   if (args.shift() !== "exec") fail("only the Codex exec protocol is admitted");
   const parsed = { configs: [], terminalStdin: false };
@@ -445,6 +460,7 @@ try {
   );
   writeFileSync(fd, `${JSON.stringify(decision)}\n`, "utf8");
   closeSync(fd);
+  recordCopilotAcceptance();
 } catch {
   recordCopilotFailure("the bounded native output file could not be created", 0, "execution");
   fail("the bounded native output file could not be created", 1);

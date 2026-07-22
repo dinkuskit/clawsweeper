@@ -225,6 +225,15 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
   );
 });
 
+test("failed reviews report only bounded adapter or native failure classes", () => {
+  const failureClass = JSON.stringify(step("review", "Report the bounded Copilot failure class"));
+  assert.match(failureClass, /copilot-adapter-status\.json/);
+  assert.match(failureClass, /native_postprocess/);
+  assert.match(failureClass, /adapter_handoff/);
+  assert.match(failureClass, /adapter_boundary/);
+  assert.doesNotMatch(failureClass, /cat\s|copilot\.stderr|codex\.stderr/);
+});
+
 test("target checkout completes before Copilot installation and ignores ambient Git config", () => {
   const steps = job("review").steps ?? [];
   const checkoutIndex = steps.findIndex(
