@@ -27,14 +27,25 @@ function createFixture() {
   const codexArtifacts = join(artifacts, "codex");
   const scratch = join(codexArtifacts, "proof-scratch", "7");
   const schemas = join(root, "schema");
+  const dist = join(root, "dist");
+  const validator = join(dist, "clawsweeper.js");
   const home = join(root, "home");
   const copilotHome = join(home, ".copilot");
   const fakeCopilot = join(root, "fake-copilot.mjs");
   const capture = join(root, "capture.json");
-  for (const path of [target, scratch, schemas, copilotHome]) {
+  for (const path of [target, scratch, schemas, dist, copilotHome]) {
     mkdirSync(path, { recursive: true });
   }
+  writeFileSync(join(root, "package.json"), '{"type":"module"}\n');
   writeFileSync(join(schemas, "clawsweeper-decision.schema.json"), nativeSchema);
+  writeFileSync(
+    validator,
+    `export function parseDecision(value) {
+  if (value?.decision !== "keep_open") throw new Error("decision.decision has invalid value");
+  return value;
+}
+`,
+  );
   writeFileSync(
     fakeCopilot,
     `#!/usr/bin/env node
@@ -84,6 +95,7 @@ process.stdout.write(process.env.FAKE_RESPONSE);
     failureDiagnostic: join(codexArtifacts, "copilot-failure.json"),
     output: join(codexArtifacts, "7.json"),
     schema: join(schemas, "clawsweeper-decision.schema.json"),
+    validator,
   };
 }
 
@@ -195,7 +207,12 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     assert.deepEqual(capture.mcpConfig.mcpServers.ClawSweeper, {
       type: "local",
       command: process.execPath,
-      args: [decisionMcp, realpathSync(fixture.schema), capture.responsePath],
+      args: [
+        decisionMcp,
+        realpathSync(fixture.schema),
+        capture.responsePath,
+        realpathSync(fixture.validator),
+      ],
       env: {},
       tools: ["submit_review"],
     });
@@ -203,7 +220,8 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     assert.ok(Buffer.byteLength(capture.prompt) < 4_096);
     assert.match(capture.request, /Review the admitted pull request/);
     assert.match(capture.request, /Required machine-readable response/);
-    assert.match(capture.request, /ClawSweeper submit_review tool exactly once/);
+    assert.match(capture.request, /ClawSweeper submit_review tool/);
+    assert.match(capture.request, /correct it and retry/);
     assert.equal(existsSync(capture.requestPath), false);
     assert.equal(existsSync(capture.responsePath), false);
     assert.equal(capture.home, realpathSync(fixture.copilotHome));
@@ -234,27 +252,37 @@ test("decision MCP exposes the native schema and records one bounded tool submis
   const fixture = createFixture();
   const responsePath = join(fixture.scratch, ".clawsweeper-copilot-response.json");
   try {
-    const result = spawnSync(process.execPath, [decisionMcp, fixture.schema, responsePath], {
-      input: `${[
-        {
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: { protocolVersion: "2025-06-18" },
-        },
-        { jsonrpc: "2.0", method: "notifications/initialized" },
-        { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
-        {
-          jsonrpc: "2.0",
-          id: 3,
-          method: "tools/call",
-          params: { name: "submit_review", arguments: { decision: "keep_open" } },
-        },
-      ]
-        .map((message) => JSON.stringify(message))
-        .join("\n")}\n`,
-      encoding: "utf8",
-    });
+    const result = spawnSync(
+      process.execPath,
+      [decisionMcp, fixture.schema, responsePath, fixture.validator],
+      {
+        input: `${[
+          {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: { protocolVersion: "2025-06-18" },
+          },
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+          {
+            jsonrpc: "2.0",
+            id: 3,
+            method: "tools/call",
+            params: { name: "submit_review", arguments: { decision: "invalid" } },
+          },
+          {
+            jsonrpc: "2.0",
+            id: 4,
+            method: "tools/call",
+            params: { name: "submit_review", arguments: { decision: "keep_open" } },
+          },
+        ]
+          .map((message) => JSON.stringify(message))
+          .join("\n")}\n`,
+        encoding: "utf8",
+      },
+    );
     assert.equal(result.status, 0, result.stderr);
     const messages = result.stdout
       .trim()
@@ -265,14 +293,17 @@ test("decision MCP exposes the native schema and records one bounded tool submis
         tools?: Array<{ name: string; inputSchema: unknown }>;
         content?: Array<{ type: string; text: string }>;
       };
+      error?: { code: number; message: string };
     }>;
     assert.deepEqual(
       messages.map((message) => message.id),
-      [1, 2, 3],
+      [1, 2, 3, 4],
     );
     assert.equal(messages[1]?.result.tools?.[0]?.name, "submit_review");
     assert.deepEqual(messages[1]?.result.tools?.[0]?.inputSchema, JSON.parse(nativeSchema));
-    assert.deepEqual(messages[2]?.result.content, [
+    assert.equal(messages[2]?.error?.code, -32602);
+    assert.match(messages[2]?.error?.message ?? "", /decision\.decision has invalid value/);
+    assert.deepEqual(messages[3]?.result.content, [
       { type: "text", text: "Native ClawSweeper review accepted." },
     ]);
     assert.equal(readFileSync(responsePath, "utf8"), '{"decision":"keep_open"}\n');

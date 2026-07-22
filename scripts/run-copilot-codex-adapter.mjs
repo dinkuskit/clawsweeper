@@ -292,6 +292,15 @@ const schemaPath = pathWithin(schemaRoot, realpathSync(invocation.schema), "the 
 if (schemaPath !== join(schemaRoot, "clawsweeper-decision.schema.json")) {
   fail("only the native ClawSweeper decision schema is admitted");
 }
+const engineRoot = realpathSync(dirname(schemaRoot));
+const validatorPath = pathWithin(
+  engineRoot,
+  realpathSync(join(engineRoot, "dist", "clawsweeper.js")),
+  "the native decision validator",
+);
+if (validatorPath !== join(engineRoot, "dist", "clawsweeper.js")) {
+  fail("only the pinned native ClawSweeper decision validator is admitted");
+}
 const outputPath = pathWithin(
   artifactRoot,
   join(realpathSync(dirname(invocation.output)), basename(invocation.output)),
@@ -305,7 +314,7 @@ const prompt = readBoundedStdin();
 if (!prompt.trim()) fail("the review prompt was empty");
 const schema = readFileSync(schemaPath, "utf8");
 if (Buffer.byteLength(schema) > MAX_SCHEMA_BYTES) fail("the decision schema exceeded its bound");
-const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nAfter completing the review, call the ClawSweeper submit_review tool exactly once. Its arguments must satisfy the native decision schema exposed by that tool. This tool call is the only accepted response.\n`;
+const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nAfter completing the review, call the ClawSweeper submit_review tool. Its arguments must satisfy the native decision schema and semantic invariants enforced by that tool. If validation rejects an invariant, correct it and retry. An accepted tool call is the only accepted response.\n`;
 
 // Linux rejects any single argv entry larger than MAX_ARG_STRLEN (normally 128 KiB),
 // even when the aggregate ARG_MAX limit is larger. A native ClawSweeper prompt plus
@@ -334,7 +343,8 @@ const bootstrapPrompt = [
   "Perform the ClawSweeper review from the complete request in this admitted read-only file:",
   requestPath,
   "Use the view tool repeatedly until you have read the entire file, including the response requirements.",
-  "Follow that request exactly, then call the ClawSweeper submit_review tool exactly once.",
+  "Follow that request exactly, then call the ClawSweeper submit_review tool.",
+  "If native validation rejects an invariant, correct it and retry the tool call.",
   "Do not finish until that tool confirms the native review was accepted.",
 ].join("\n");
 if (Buffer.byteLength(bootstrapPrompt) > MAX_BOOTSTRAP_PROMPT_BYTES) {
@@ -352,7 +362,7 @@ const additionalMcpConfig = JSON.stringify({
     ClawSweeper: {
       type: "local",
       command: process.execPath,
-      args: [decisionMcpBin, schemaPath, responsePath],
+      args: [decisionMcpBin, schemaPath, responsePath, validatorPath],
       env: {},
       tools: ["submit_review"],
     },

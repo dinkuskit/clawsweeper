@@ -10,9 +10,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const MAX_MESSAGE_BYTES = 1_500_000;
 const MAX_RESPONSE_BYTES = 1_000_000;
+const MAX_SUBMISSION_ATTEMPTS = 4;
 const TOOL_NAME = "submit_review";
 
 function terminate(message) {
@@ -29,10 +31,14 @@ function respondError(id, code, message) {
 }
 
 const argv = process.argv.slice(2);
-if (argv.length !== 2) terminate("expected the exact schema and response paths");
-const [configuredSchemaPath, responsePath] = argv;
-if (!isAbsolute(configuredSchemaPath) || !isAbsolute(responsePath)) {
-  terminate("schema and response paths must be absolute");
+if (argv.length !== 3) terminate("expected the exact schema, response, and validator paths");
+const [configuredSchemaPath, responsePath, configuredValidatorPath] = argv;
+if (
+  !isAbsolute(configuredSchemaPath) ||
+  !isAbsolute(responsePath) ||
+  !isAbsolute(configuredValidatorPath)
+) {
+  terminate("schema, response, and validator paths must be absolute");
 }
 
 let schemaPath;
@@ -52,6 +58,15 @@ try {
 } catch {
   terminate("the response directory did not resolve");
 }
+let validatorPath;
+try {
+  validatorPath = realpathSync(configuredValidatorPath);
+} catch {
+  terminate("the native decision validator did not resolve");
+}
+if (basename(validatorPath) !== "clawsweeper.js" || basename(dirname(validatorPath)) !== "dist") {
+  terminate("the admitted native decision validator was unavailable");
+}
 
 let decisionSchema;
 try {
@@ -68,7 +83,34 @@ if (
   terminate("the native decision schema was not an object schema");
 }
 
+let parseDecision;
+try {
+  ({ parseDecision } = await import(pathToFileURL(validatorPath).href));
+} catch {
+  terminate("the native decision validator could not be loaded");
+}
+if (typeof parseDecision !== "function") {
+  terminate("the native decision validator did not expose parseDecision");
+}
+
 let responseSubmitted = false;
+let submissionAttempts = 0;
+function boundedValidationMessage(error) {
+  const message = error instanceof Error ? error.message : "native decision validation failed";
+  return [...message]
+    .filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return (
+        codePoint === 9 ||
+        codePoint === 10 ||
+        codePoint === 13 ||
+        (codePoint >= 32 && codePoint !== 127)
+      );
+    })
+    .join("")
+    .slice(0, 500);
+}
+
 function handleMessage(message) {
   if (!message || typeof message !== "object" || Array.isArray(message)) return;
   const { id, method, params } = message;
@@ -78,7 +120,7 @@ function handleMessage(message) {
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: "ClawSweeper", version: "1.0.0" },
       instructions:
-        "After completing the review, call submit_review exactly once. Its arguments are the complete native ClawSweeper decision.",
+        "After completing the review, call submit_review with the complete native ClawSweeper decision. If validation rejects it, correct the named invariant and retry until accepted.",
     });
     return;
   }
@@ -92,7 +134,7 @@ function handleMessage(message) {
         {
           name: TOOL_NAME,
           description:
-            "Submit the complete native ClawSweeper review. Call exactly once after reviewing; this is the only accepted completion mechanism.",
+            "Submit the complete native ClawSweeper review. If native validation rejects an invariant, correct it and retry; only the first accepted submission is recorded.",
           inputSchema: decisionSchema,
         },
       ],
@@ -108,12 +150,28 @@ function handleMessage(message) {
       respondError(id, -32600, "the native review was already submitted");
       return;
     }
+    submissionAttempts += 1;
+    if (submissionAttempts > MAX_SUBMISSION_ATTEMPTS) {
+      respondError(id, -32600, "the bounded native review submission budget was exhausted");
+      return;
+    }
     const decision = params?.arguments;
     if (!decision || typeof decision !== "object" || Array.isArray(decision)) {
       respondError(id, -32602, "submit_review requires one decision object");
       return;
     }
-    const payload = `${JSON.stringify(decision)}\n`;
+    let validatedDecision;
+    try {
+      validatedDecision = parseDecision(decision);
+    } catch (error) {
+      respondError(
+        id,
+        -32602,
+        `native validation rejected the submission: ${boundedValidationMessage(error)}`,
+      );
+      return;
+    }
+    const payload = `${JSON.stringify(validatedDecision)}\n`;
     if (Buffer.byteLength(payload) > MAX_RESPONSE_BYTES) {
       respondError(id, -32602, "the native review exceeded its bounded size");
       return;
