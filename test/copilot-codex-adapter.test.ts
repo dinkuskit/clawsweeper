@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -36,12 +37,16 @@ function createFixture() {
   writeFileSync(
     fakeCopilot,
     `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 const promptIndex = args.indexOf("-p");
+const prompt = promptIndex >= 0 ? args[promptIndex + 1] : null;
+const requestPath = prompt?.split("\\n")[1] ?? null;
 writeFileSync(process.env.FAKE_CAPTURE, JSON.stringify({
   args,
-  prompt: promptIndex >= 0 ? args[promptIndex + 1] : null,
+  prompt,
+  requestPath,
+  request: requestPath ? readFileSync(requestPath, "utf8") : null,
   home: process.env.COPILOT_HOME,
 }));
 if (process.env.FAKE_FAIL === "1") {
@@ -99,7 +104,13 @@ function codexArgs(fixture: Fixture): string[] {
 
 function runAdapter(
   fixture: Fixture,
-  options: { args?: string[]; error?: string; fail?: boolean; response?: string } = {},
+  options: {
+    args?: string[];
+    error?: string;
+    fail?: boolean;
+    input?: string;
+    response?: string;
+  } = {},
 ) {
   return spawnSync(process.execPath, [adapter, ...(options.args ?? codexArgs(fixture))], {
     cwd: fixture.target,
@@ -120,7 +131,7 @@ function runAdapter(
       FAKE_FAIL: options.fail ? "1" : "0",
       FAKE_RESPONSE: options.response ?? '{"decision":"keep_open"}',
     },
-    input: "Review the admitted pull request.",
+    input: options.input ?? "Review the admitted pull request.",
     encoding: "utf8",
   });
 }
@@ -136,6 +147,8 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     const capture = JSON.parse(readFileSync(fixture.capture, "utf8")) as {
       args: string[];
       prompt: string;
+      requestPath: string;
+      request: string;
       home: string;
     };
     assert.ok(capture.args.includes("--model=gpt-5.6-terra"));
@@ -151,10 +164,36 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
       capture.args.filter((arg) => arg.startsWith("--allow-tool")),
       ["--allow-tool=view,glob,grep"],
     );
-    assert.match(capture.prompt, /Review the admitted pull request/);
-    assert.match(capture.prompt, /Required machine-readable response/);
-    assert.match(capture.prompt, /"additionalProperties": false/);
+    assert.match(capture.prompt, /complete request in this admitted read-only file/);
+    assert.ok(Buffer.byteLength(capture.prompt) < 4_096);
+    assert.match(capture.request, /Review the admitted pull request/);
+    assert.match(capture.request, /Required machine-readable response/);
+    assert.match(capture.request, /"additionalProperties": false/);
+    assert.equal(existsSync(capture.requestPath), false);
     assert.equal(capture.home, realpathSync(fixture.copilotHome));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Copilot adapter keeps oversized native requests out of the process argument vector", () => {
+  const fixture = createFixture();
+  try {
+    const oversizedPrompt = `Review this exact bounded input:\n${"x".repeat(300_000)}`;
+    const result = runAdapter(fixture, { input: oversizedPrompt });
+    assert.equal(result.status, 0, result.stderr);
+    const capture = JSON.parse(readFileSync(fixture.capture, "utf8")) as {
+      args: string[];
+      prompt: string;
+      requestPath: string;
+      request: string;
+    };
+    assert.ok(Buffer.byteLength(capture.prompt) < 4_096);
+    assert.ok(Math.max(...capture.args.map((arg) => Buffer.byteLength(arg))) < 4_096);
+    assert.match(capture.request, /Review this exact bounded input/);
+    assert.ok(Buffer.byteLength(capture.request) > 300_000);
+    assert.match(capture.request, /Required machine-readable response/);
+    assert.equal(existsSync(capture.requestPath), false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

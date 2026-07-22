@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   statSync,
+  unlinkSync,
   writeFileSync,
   closeSync,
 } from "node:fs";
@@ -16,6 +17,7 @@ const MAX_PROMPT_BYTES = 1_500_000;
 const MAX_SCHEMA_BYTES = 200_000;
 const MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_ERROR_BYTES = 8_000;
+const MAX_BOOTSTRAP_PROMPT_BYTES = 4_096;
 const EXPECTED_MODEL = "gpt-5.6-terra";
 const EXPECTED_EFFORT = "high";
 
@@ -261,6 +263,40 @@ const schema = readFileSync(schemaPath, "utf8");
 if (Buffer.byteLength(schema) > MAX_SCHEMA_BYTES) fail("the decision schema exceeded its bound");
 const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nReturn exactly one JSON object and no prose or Markdown fence. The object must satisfy this JSON Schema exactly:\n\n${schema}\n`;
 
+// Linux rejects any single argv entry larger than MAX_ARG_STRLEN (normally 128 KiB),
+// even when the aggregate ARG_MAX limit is larger. A native ClawSweeper prompt plus
+// its decision schema routinely crosses that boundary. Keep the complete bounded
+// request in the already-admitted read-only scratch tree and pass only a small,
+// deterministic bootstrap prompt to Copilot.
+const requestPath = join(scratchRoot, ".clawsweeper-copilot-request.md");
+try {
+  const fd = openSync(
+    requestPath,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+    0o400,
+  );
+  writeFileSync(fd, combinedPrompt, "utf8");
+  closeSync(fd);
+} catch {
+  recordCopilotFailure("the bounded Copilot request file could not be created", null, "execution");
+  fail("the bounded Copilot request file could not be created", 1);
+}
+const bootstrapPrompt = [
+  "Perform the ClawSweeper review from the complete request in this admitted read-only file:",
+  requestPath,
+  "Use the view tool repeatedly until you have read the entire file, including the response schema.",
+  "Follow that request exactly and return only its required JSON object.",
+].join("\n");
+if (Buffer.byteLength(bootstrapPrompt) > MAX_BOOTSTRAP_PROMPT_BYTES) {
+  try {
+    unlinkSync(requestPath);
+  } catch {
+    // The primary bounded-prompt failure remains authoritative.
+  }
+  recordCopilotFailure("the Copilot bootstrap prompt exceeded its bound", null, "execution");
+  fail("the Copilot bootstrap prompt exceeded its bound", 1);
+}
+
 const copilotArgs = [
   `--model=${configuredModel}`,
   `--effort=${configuredEffort}`,
@@ -285,22 +321,32 @@ const copilotArgs = [
   "--add-dir",
   scratchRoot,
   "-p",
-  combinedPrompt,
+  bootstrapPrompt,
 ];
-const result = spawnSync(copilotBin, copilotArgs, {
-  cwd: targetRoot,
-  env: {
-    ...process.env,
-    HOME: requiredEnv("HOME"),
-    COPILOT_HOME: copilotHome,
-    COPILOT_GITHUB_TOKEN: token,
-    CI: "true",
-    NO_COLOR: "1",
-  },
-  encoding: "utf8",
-  maxBuffer: MAX_RESPONSE_BYTES,
-  stdio: ["ignore", "pipe", "pipe"],
-});
+let result;
+try {
+  result = spawnSync(copilotBin, copilotArgs, {
+    cwd: targetRoot,
+    env: {
+      ...process.env,
+      HOME: requiredEnv("HOME"),
+      COPILOT_HOME: copilotHome,
+      COPILOT_GITHUB_TOKEN: token,
+      CI: "true",
+      NO_COLOR: "1",
+    },
+    encoding: "utf8",
+    maxBuffer: MAX_RESPONSE_BYTES,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+} finally {
+  try {
+    unlinkSync(requestPath);
+  } catch {
+    // The native review result remains authoritative; the containing artifact tree
+    // is revoked and removed by the workflow even if this best-effort cleanup fails.
+  }
+}
 if (result.error) {
   recordCopilotFailure(result.error.message, null, "execution");
   fail(`Copilot CLI failed to execute: ${result.error.message}`, 1);
