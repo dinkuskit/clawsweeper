@@ -43,6 +43,97 @@
       "package_manager": "pnpm",
       "validation_commands": [],
       "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/blocks",
+      "display_name": "Dinkus Blocks",
+      "checkout_dir": "dinkuskit-blocks",
+      "prompt_note": "Use the Dinkus Blocks source tree and current default branch. This is a public EmDash section-block package with Astro renderers. Review conservatively for typed public-contract drift, rendering and link safety, fixture fidelity, secret or customer-data hygiene, and package boundaries. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "pnpm",
+      "validation_commands": [],
+      "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/template-store",
+      "display_name": "Dinkus Store Template",
+      "checkout_dir": "dinkuskit-template-store",
+      "prompt_note": "Use the Dinkus Store Template source tree and current default branch. Review conservatively for generic reusable defaults, safe checkout and content boundaries, absence of production or customer configuration, secret hygiene, and reproducible setup. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "pnpm",
+      "validation_commands": [],
+      "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/template-services",
+      "display_name": "Dinkus Services Template",
+      "checkout_dir": "dinkuskit-template-services",
+      "prompt_note": "Use the Dinkus Services Template source tree and current default branch. Review conservatively for generic reusable defaults, form and contact safety, absence of production or customer configuration, secret hygiene, and reproducible setup. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "pnpm",
+      "validation_commands": [],
+      "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/template-marketing",
+      "display_name": "Dinkus Marketing Template",
+      "checkout_dir": "dinkuskit-template-marketing",
+      "prompt_note": "Use the Dinkus Marketing Template source tree and current default branch. Review conservatively for generic reusable defaults, content and render fallback safety, absence of production or customer configuration, secret hygiene, and reproducible setup. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "pnpm",
+      "validation_commands": [],
+      "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/inventory",
+      "display_name": "Dinkus Inventory",
+      "checkout_dir": "dinkuskit-inventory",
+      "prompt_note": "Use the Dinkus Inventory source tree and current default branch. Review conservatively for single-writer pool authority, atomic reservation and movement receipts, reconciliation and idempotency, SDK contract compatibility, secret or customer-data hygiene, and migration safety. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "pnpm",
+      "validation_commands": [],
+      "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/coupons",
+      "display_name": "Dinkus Coupons",
+      "checkout_dir": "dinkuskit-coupons",
+      "prompt_note": "Use the Dinkus Coupons source tree and current default branch. Review conservatively for server-authoritative money and eligibility, deterministic promotion ordering and allocation, redemption idempotency, SDK contract compatibility, secret or customer-data hygiene, and migration safety. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "pnpm",
+      "validation_commands": [],
+      "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/bundles",
+      "display_name": "Dinkus Bundles",
+      "checkout_dir": "dinkuskit-bundles",
+      "prompt_note": "Use the Dinkus Bundles source tree and current default branch. Review conservatively for parent and child line-graph identity, server-side configuration and pricing, child-SKU inventory, tax, refund and fulfillment allocations, SDK contract compatibility, secret or customer-data hygiene, and migration safety. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "pnpm",
+      "validation_commands": [],
+      "changed_gate": null
     }
   ],
   "generic_fallbacks": [

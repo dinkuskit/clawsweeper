@@ -22751,6 +22751,7 @@ function reviewCommand(args: Args): void {
   const shardCount = numberArg(args.shard_count, 1);
   const hotIntake = boolArg(args.hot_intake);
   const readonlyOpenclaw = boolArg(args.readonly_openclaw);
+  const disableMediaProofPreprocessing = boolArg(args.disable_media_proof_preprocessing);
   const skipStartComment = boolArg(args.skip_start_comment) || localOnly || localRange;
   const suppliedReviewLease = suppliedReviewStartLeaseFromArgs(args);
   if (suppliedReviewLease && !skipStartComment) {
@@ -23805,7 +23806,8 @@ function reviewCommand(args: Args): void {
       // capture, and prepareMediaProofArtifacts would host-side `curl` + `ffmpeg` any media URL
       // in the synthetic body (commit message / --body-file). Skip it entirely for local-range:
       // no host download, no transcode of body-supplied URLs.
-      const preparedMediaProof: PreparedMediaProof = localRangeData
+      const preparedMediaProof: PreparedMediaProof =
+        localRangeData || disableMediaProofPreprocessing
         ? { manifestPath: null, summaryPath: null, artifacts: [] }
         : prepareMediaProofArtifacts(context, proofScratchDir);
       const prompt = buildReviewPrompt(

@@ -1,0 +1,706 @@
+name: DinkusKit native ClawSweeper canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number (the first canary is restricted to blocks#7)
+        required: true
+        type: string
+        default: "7"
+      expected_base_sha:
+        description: Exact current main SHA to review against
+        required: true
+        type: string
+      expected_head_sha:
+        description: Exact pull request head SHA to review
+        required: true
+        type: string
+      publish:
+        description: Publish the native comment, labels, and durable state record
+        required: true
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: dinkuskit-native-clawsweeper-canary
+  cancel-in-progress: false
+
+env:
+  TARGET_REPO: dinkuskit/blocks
+  TARGET_REPOSITORY_ID: "1306882611"
+  STATE_REPO: dinkuskit/clawsweeper-state
+  STATE_BRANCH: state
+  UPSTREAM_BASE_SHA: e9423a404ffe6527373b84053e1df4d0d8bbd77b
+  CANARY_ROOT: /opt/dinkuskit-clawsweeper-canary
+  CANARY_ENGINE: /opt/dinkuskit-clawsweeper-canary/engine
+  CANARY_TARGET: /opt/dinkuskit-clawsweeper-canary/target
+  CANARY_ARTIFACTS: /opt/dinkuskit-clawsweeper-canary/review-artifacts
+  CANARY_EMPTY_STATE: /opt/dinkuskit-clawsweeper-canary/empty-state
+
+jobs:
+  admit:
+    name: Admit exact blocks PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      base_ref: ${{ steps.binding.outputs.base_ref }}
+      base_sha: ${{ steps.binding.outputs.base_sha }}
+      head_repo: ${{ steps.binding.outputs.head_repo }}
+      head_sha: ${{ steps.binding.outputs.head_sha }}
+      item_number: ${{ steps.binding.outputs.item_number }}
+      merge_base_sha: ${{ steps.binding.outputs.merge_base_sha }}
+      repository_id: ${{ steps.binding.outputs.repository_id }}
+    env:
+      EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
+      EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+    steps:
+      - name: Mint the repository-scoped admission token
+        id: admission-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
+          owner: dinkuskit
+          repositories: blocks
+          permission-contents: read
+          permission-pull-requests: read
+
+      - name: Bind the live pull request tuple
+        id: binding
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.admission-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || [ "$PR_NUMBER" != "7" ]; then
+            echo "This first canary admits only dinkuskit/blocks#7." >&2
+            exit 1
+          fi
+          if ! [[ "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_base_sha must be a lowercase 40-character SHA." >&2
+            exit 1
+          fi
+          if ! [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_head_sha must be a lowercase 40-character SHA." >&2
+            exit 1
+          fi
+
+          repo_json="$(gh api "repos/$TARGET_REPO")"
+          repository_id="$(jq -r '.id' <<<"$repo_json")"
+          repository_name="$(jq -r '.full_name' <<<"$repo_json")"
+          archived="$(jq -r '.archived' <<<"$repo_json")"
+          visibility="$(jq -r '.visibility' <<<"$repo_json")"
+          if [ "$repository_id" != "$TARGET_REPOSITORY_ID" ] \
+            || [ "$repository_name" != "$TARGET_REPO" ] \
+            || [ "$archived" != "false" ] \
+            || [ "$visibility" != "public" ]; then
+            echo "Target repository identity or state is not admitted." >&2
+            exit 1
+          fi
+
+          pull_json="$(gh api "repos/$TARGET_REPO/pulls/$PR_NUMBER")"
+          state="$(jq -r '.state' <<<"$pull_json")"
+          base_repo="$(jq -r '.base.repo.full_name' <<<"$pull_json")"
+          base_ref="$(jq -r '.base.ref' <<<"$pull_json")"
+          head_repo="$(jq -r '.head.repo.full_name' <<<"$pull_json")"
+          head_sha="$(jq -r '.head.sha' <<<"$pull_json")"
+          if [ "$state" != "open" ] || [ "$base_repo" != "$TARGET_REPO" ] || [ "$base_ref" != "main" ]; then
+            echo "The admitted target must be an open pull request into dinkuskit/blocks main." >&2
+            exit 1
+          fi
+          if ! [[ "$head_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+            || ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The pull request head identity is invalid." >&2
+            exit 1
+          fi
+
+          base_sha="$(gh api "repos/$TARGET_REPO/git/ref/heads/$base_ref" --jq '.object.sha')"
+          if [ "$base_sha" != "$EXPECTED_BASE_SHA" ] || [ "$head_sha" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "The live pull request no longer matches the operator-supplied base/head tuple." >&2
+            exit 1
+          fi
+          merge_base_sha="$(gh api "repos/$TARGET_REPO/compare/$base_sha...$head_sha" --jq '.merge_base_commit.sha')"
+          if ! [[ "$merge_base_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "GitHub did not return a valid merge-base SHA." >&2
+            exit 1
+          fi
+
+          {
+            echo "base_ref=$base_ref"
+            echo "base_sha=$base_sha"
+            echo "head_repo=$head_repo"
+            echo "head_sha=$head_sha"
+            echo "item_number=$PR_NUMBER"
+            echo "merge_base_sha=$merge_base_sha"
+            echo "repository_id=$repository_id"
+          } >> "$GITHUB_OUTPUT"
+
+  review:
+    name: Native ClawSweeper review
+    needs: admit
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.review-artifact.outputs.artifact-id }}
+      producer_attempt: ${{ steps.review-attempt.outputs.value }}
+    env:
+      BASE_REF: ${{ needs.admit.outputs.base_ref }}
+      BASE_SHA: ${{ needs.admit.outputs.base_sha }}
+      HEAD_REPO: ${{ needs.admit.outputs.head_repo }}
+      HEAD_SHA: ${{ needs.admit.outputs.head_sha }}
+      MERGE_BASE_SHA: ${{ needs.admit.outputs.merge_base_sha }}
+      PR_NUMBER: ${{ needs.admit.outputs.item_number }}
+      REPOSITORY_ID: ${{ needs.admit.outputs.repository_id }}
+    steps:
+      - name: Check out the trusted ClawSweeper engine
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: clawsweeper
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+
+      - name: Build the pinned native engine without shared caches
+        working-directory: clawsweeper
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
+          corepack enable
+          corepack prepare pnpm@11.10.0 --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build:all
+
+      - name: Prepare the exact target checkout as read-only data
+        shell: bash
+        env:
+          GIT_ATTR_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          target_dir="$CANARY_TARGET"
+          hooks_dir="$RUNNER_TEMP/disabled-git-hooks"
+          sudo install -d -o "$USER" -g "$(id -gn)" -m 0755 "$CANARY_ROOT"
+          mkdir -p "$hooks_dir"
+          git -c protocol.file.allow=never clone \
+            --filter=blob:none \
+            --no-checkout \
+            "https://github.com/$TARGET_REPO.git" \
+            "$target_dir"
+          git -C "$target_dir" config core.hooksPath "$hooks_dir"
+          git -C "$target_dir" fetch --force --no-tags origin \
+            "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF" \
+            "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/clawsweeper-pr-$PR_NUMBER"
+          test "$(git -C "$target_dir" rev-parse "refs/remotes/origin/$BASE_REF")" = "$BASE_SHA"
+          test "$(git -C "$target_dir" rev-parse "refs/remotes/origin/clawsweeper-pr-$PR_NUMBER")" = "$HEAD_SHA"
+          test "$(git -C "$target_dir" merge-base "$BASE_SHA" "$HEAD_SHA")" = "$MERGE_BASE_SHA"
+          git -C "$target_dir" checkout --force -B "clawsweeper/pr-$PR_NUMBER" "$HEAD_SHA"
+          test "$(git -C "$target_dir" rev-parse HEAD)" = "$HEAD_SHA"
+          chmod -R go-w "$target_dir" "$GITHUB_WORKSPACE/clawsweeper"
+
+      - name: Stage the trusted engine outside the runner home
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$CANARY_ENGINE"
+          tar -C "$GITHUB_WORKSPACE/clawsweeper" \
+            --exclude=.git \
+            --exclude=.artifacts \
+            --exclude=artifacts \
+            --exclude=.clawsweeper-repair \
+            --exclude=.npmrc \
+            --exclude='.env*' \
+            -cf - . \
+            | tar -C "$CANARY_ENGINE" -xf -
+          chmod -R go-w "$CANARY_ENGINE"
+          test -f "$CANARY_ENGINE/dist/clawsweeper.js"
+          test -f "$CANARY_ENGINE/scripts/run-codex-unprivileged.sh"
+
+      - name: Set up pinned Codex through the upstream localhost proxy
+        uses: ./clawsweeper/.github/actions/setup-codex
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAWSWEEPER_INTERNAL_MODEL: ${{ secrets.CLAWSWEEPER_MODEL }}
+        with:
+          cache-enabled: "false"
+          login-status: "true"
+
+      - name: Prepare the unprivileged Codex runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          model_user="clawsweeper-model"
+          share_group="clawsweeper-share"
+          model_home="$CANARY_ROOT/model-home"
+          model_codex_home="$model_home/.codex"
+          model_runtime="$CANARY_ROOT/codex-runtime"
+          model_bin="$CANARY_ROOT/model-bin"
+          model_git_config="$CANARY_ROOT/model-gitconfig"
+          node_bin_dir="$(dirname "$(command -v node)")"
+          codex_prefix="$(dirname "$(dirname "$(command -v codex)")")"
+
+          sudo addgroup --system "$share_group"
+          sudo adduser --system --no-create-home --home "$model_home" \
+            --shell /bin/bash --group "$model_user"
+          sudo usermod --append --groups "$share_group" "$model_user"
+          sudo install -d -o "$model_user" -g "$model_user" -m 0700 \
+            "$model_home" "$model_codex_home"
+          sudo install -o "$model_user" -g "$model_user" -m 0600 \
+            "$CODEX_HOME/config.toml" "$model_codex_home/config.toml"
+
+          sudo install -d -o root -g root -m 0755 "$model_runtime" "$model_bin"
+          sudo cp -a "$codex_prefix/." "$model_runtime/"
+          sudo chown -R root:root "$model_runtime"
+          sudo chmod -R a-w "$model_runtime"
+          sudo install -o root -g root -m 0555 \
+            "$GITHUB_WORKSPACE/clawsweeper/scripts/run-codex-unprivileged.sh" \
+            "$model_bin/codex"
+          sudo install -o root -g root -m 0600 /dev/null "$model_git_config"
+          sudo git config --file "$model_git_config" --add safe.directory "$CANARY_TARGET"
+          sudo chmod 0444 "$model_git_config"
+
+          if sudo --non-interactive --user="$model_user" -- sudo --non-interactive true \
+            >/dev/null 2>&1; then
+            echo "The model account unexpectedly retained sudo authority." >&2
+            exit 1
+          fi
+
+          model_groups="$(id -nG "$model_user")"
+          test "$model_groups" = "$model_user $share_group" \
+            || test "$model_groups" = "$share_group $model_user"
+
+          {
+            echo "CLAWSWEEPER_MODEL_USER=$model_user"
+            echo "CLAWSWEEPER_MODEL_HOME=$model_home"
+            echo "CLAWSWEEPER_MODEL_CODEX_HOME=$model_codex_home"
+            echo "CLAWSWEEPER_MODEL_GIT_CONFIG=$model_git_config"
+            echo "CLAWSWEEPER_MODEL_PATH=$node_bin_dir:/usr/local/bin:/usr/bin:/bin"
+            echo "CLAWSWEEPER_REAL_CODEX=$model_runtime/bin/codex"
+            echo "CLAWSWEEPER_SHARE_GROUP=$share_group"
+          } >> "$GITHUB_ENV"
+
+      - name: Mint the repository-scoped review token
+        id: review-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
+          owner: dinkuskit
+          repositories: blocks
+          permission-checks: read
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+          permission-statuses: read
+
+      - name: Run the native ClawSweeper review
+        working-directory: /opt/dinkuskit-clawsweeper-canary/engine
+        shell: bash
+        env:
+          GIT_ATTR_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_TERMINAL_PROMPT: "0"
+          GH_TOKEN: ${{ steps.review-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CANARY_EMPTY_STATE/items"
+          sudo install -d -o "$USER" -g "$(id -gn)" -m 0755 "$CANARY_ARTIFACTS"
+          sudo install -d -o "$USER" -g "$CLAWSWEEPER_SHARE_GROUP" -m 2770 \
+            "$CANARY_ARTIFACTS/codex" \
+            "$CANARY_ARTIFACTS/codex/proof-scratch" \
+            "$CANARY_ARTIFACTS/codex/proof-scratch/$PR_NUMBER"
+          export PATH="$CANARY_ROOT/model-bin:$PATH"
+          timeout --kill-after=30s 1500s node dist/clawsweeper.js review \
+            --local-only \
+            --target-repo "$TARGET_REPO" \
+            --target-dir "$CANARY_TARGET" \
+            --items-dir "$CANARY_EMPTY_STATE/items" \
+            --artifact-dir "$CANARY_ARTIFACTS" \
+            --batch-size 1 \
+            --max-pages 5 \
+            --codex-model internal \
+            --codex-reasoning-effort high \
+            --codex-sandbox read-only \
+            --codex-timeout-ms 1200000 \
+            --item-number "$PR_NUMBER" \
+            --readonly-openclaw \
+            --disable-media-proof-preprocessing \
+            --shard-index 0 \
+            --shard-count 1
+
+      - name: Revoke model runtime write access
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo pkill --signal KILL --uid "$CLAWSWEEPER_MODEL_USER" 2>/dev/null || true
+          if [ -d "$CANARY_ARTIFACTS" ]; then
+            sudo chown -R "$USER:$(id -gn)" "$CANARY_ARTIFACTS"
+            chmod -R go-w "$CANARY_ARTIFACTS"
+          fi
+
+      - name: Validate the exact native report and live tuple
+        working-directory: /opt/dinkuskit-clawsweeper-canary/engine
+        shell: bash
+        env:
+          GIT_ATTR_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_TERMINAL_PROMPT: "0"
+          GH_TOKEN: ${{ steps.review-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          target_dir="$CANARY_TARGET"
+          test -z "$(git -C "$target_dir" status --porcelain)"
+          test "$(git -C "$target_dir" rev-parse HEAD)" = "$HEAD_SHA"
+          live_head="$(gh api "repos/$TARGET_REPO/pulls/$PR_NUMBER" --jq '.head.sha')"
+          live_base="$(gh api "repos/$TARGET_REPO/git/ref/heads/$BASE_REF" --jq '.object.sha')"
+          live_merge_base="$(gh api "repos/$TARGET_REPO/compare/$BASE_SHA...$HEAD_SHA" --jq '.merge_base_commit.sha')"
+          test "$live_head" = "$HEAD_SHA"
+          test "$live_base" = "$BASE_SHA"
+          test "$live_merge_base" = "$MERGE_BASE_SHA"
+          node scripts/validate-dinkuskit-canary-report.mjs \
+            --report "$CANARY_ARTIFACTS/$PR_NUMBER.md" \
+            --repository "$TARGET_REPO" \
+            --item-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA"
+          if grep -Fq -- "$GH_TOKEN" "$CANARY_ARTIFACTS/$PR_NUMBER.md"; then
+            echo "The native report contained its short-lived read token." >&2
+            exit 1
+          fi
+
+      - name: Create the bounded native review bundle
+        working-directory: /opt/dinkuskit-clawsweeper-canary/engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          decision="$(jq -nc \
+            --arg target_repo "$TARGET_REPO" \
+            --arg repository_id "$REPOSITORY_ID" \
+            --arg item_number "$PR_NUMBER" \
+            --arg base_ref "$BASE_REF" \
+            --arg base_sha "$BASE_SHA" \
+            --arg head_repo "$HEAD_REPO" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg merge_base_sha "$MERGE_BASE_SHA" \
+            --arg engine_sha "$GITHUB_SHA" \
+            --arg upstream_base_sha "$UPSTREAM_BASE_SHA" \
+            '{target_repo:$target_repo,repository_id:($repository_id|tonumber),item_number:($item_number|tonumber),base_ref:$base_ref,base_sha:$base_sha,head_repo:$head_repo,head_sha:$head_sha,merge_base_sha:$merge_base_sha,engine_sha:$engine_sha,upstream_base_sha:$upstream_base_sha}')"
+          export EXACT_REVIEW_ACTION_LEDGER_ROOT=""
+          export EXACT_REVIEW_BUNDLE_DIR="$RUNNER_TEMP/exact-review-bundle"
+          export EXACT_REVIEW_CLAIM_GENERATION=""
+          export EXACT_REVIEW_DECISION="$decision"
+          export EXACT_REVIEW_GENERATION_ATTEMPT="$GITHUB_RUN_ATTEMPT"
+          export EXACT_REVIEW_ITEM_KEY="$TARGET_REPO#$PR_NUMBER"
+          export EXACT_REVIEW_ITEM_KIND="pull_request"
+          export EXACT_REVIEW_ITEM_NUMBER="$PR_NUMBER"
+          export EXACT_REVIEW_LEASE_REVISION=""
+          export EXACT_REVIEW_LIVE_GUARDED_OPEN="false"
+          export EXACT_REVIEW_LIVE_PROCEEDED="true"
+          export EXACT_REVIEW_LIVE_TERMINAL_MISSING="false"
+          export EXACT_REVIEW_LIVE_TERMINAL_NOOP="false"
+          export EXACT_REVIEW_PRODUCER_JOB="review"
+          export EXACT_REVIEW_PROTOCOL_VERSION="1"
+          export EXACT_REVIEW_REPORT_PATH="$CANARY_ARTIFACTS/$PR_NUMBER.md"
+          export EXACT_REVIEW_SOURCE_SHA="$GITHUB_SHA"
+          export EXACT_REVIEW_TARGET_BRANCH="$BASE_REF"
+          export EXACT_REVIEW_TARGET_REPO="$TARGET_REPO"
+          pnpm run --silent repair:exact-review-bundle create
+
+      - name: Upload the bounded native review bundle
+        id: review-artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dinkuskit-native-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/exact-review-bundle
+          include-hidden-files: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record the review producer attempt
+        id: review-attempt
+        shell: bash
+        run: echo "value=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish native comment, labels, and state
+    if: ${{ inputs.publish }}
+    needs: [admit, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    env:
+      BASE_REF: ${{ needs.admit.outputs.base_ref }}
+      BASE_SHA: ${{ needs.admit.outputs.base_sha }}
+      HEAD_REPO: ${{ needs.admit.outputs.head_repo }}
+      HEAD_SHA: ${{ needs.admit.outputs.head_sha }}
+      MERGE_BASE_SHA: ${{ needs.admit.outputs.merge_base_sha }}
+      PR_NUMBER: ${{ needs.admit.outputs.item_number }}
+      REPOSITORY_ID: ${{ needs.admit.outputs.repository_id }}
+    steps:
+      - name: Check out the trusted ClawSweeper publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: clawsweeper
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+
+      - name: Build the pinned native publisher without shared caches
+        working-directory: clawsweeper
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
+          corepack enable
+          corepack prepare pnpm@11.10.0 --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build:all
+
+      - name: Download the native review bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.review.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/exact-review-bundle
+
+      - name: Validate the artifact against trusted admission outputs
+        working-directory: clawsweeper
+        shell: bash
+        run: |
+          set -euo pipefail
+          decision="$(jq -nc \
+            --arg target_repo "$TARGET_REPO" \
+            --arg repository_id "$REPOSITORY_ID" \
+            --arg item_number "$PR_NUMBER" \
+            --arg base_ref "$BASE_REF" \
+            --arg base_sha "$BASE_SHA" \
+            --arg head_repo "$HEAD_REPO" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg merge_base_sha "$MERGE_BASE_SHA" \
+            --arg engine_sha "$GITHUB_SHA" \
+            --arg upstream_base_sha "$UPSTREAM_BASE_SHA" \
+            '{target_repo:$target_repo,repository_id:($repository_id|tonumber),item_number:($item_number|tonumber),base_ref:$base_ref,base_sha:$base_sha,head_repo:$head_repo,head_sha:$head_sha,merge_base_sha:$merge_base_sha,engine_sha:$engine_sha,upstream_base_sha:$upstream_base_sha}')"
+          export EXACT_REVIEW_BUNDLE_DIR="$RUNNER_TEMP/exact-review-bundle"
+          export EXACT_REVIEW_CLAIM_GENERATION=""
+          export EXACT_REVIEW_DECISION="$decision"
+          export EXACT_REVIEW_GENERATION_ATTEMPT="${{ needs.review.outputs.producer_attempt }}"
+          export EXACT_REVIEW_ITEM_KEY="$TARGET_REPO#$PR_NUMBER"
+          export EXACT_REVIEW_ITEM_KIND="pull_request"
+          export EXACT_REVIEW_ITEM_NUMBER="$PR_NUMBER"
+          export EXACT_REVIEW_LEASE_REVISION=""
+          export EXACT_REVIEW_LIVE_GUARDED_OPEN="false"
+          export EXACT_REVIEW_LIVE_PROCEEDED="true"
+          export EXACT_REVIEW_LIVE_TERMINAL_MISSING="false"
+          export EXACT_REVIEW_LIVE_TERMINAL_NOOP="false"
+          export EXACT_REVIEW_PRODUCER_JOB="review"
+          export EXACT_REVIEW_PRODUCER_RUN_ID="$GITHUB_RUN_ID"
+          export EXACT_REVIEW_PROTOCOL_VERSION="1"
+          export EXACT_REVIEW_SOURCE_SHA="$GITHUB_SHA"
+          export EXACT_REVIEW_TARGET_BRANCH="$BASE_REF"
+          export EXACT_REVIEW_TARGET_REPO="$TARGET_REPO"
+          pnpm run --silent repair:exact-review-bundle validate
+          node scripts/validate-dinkuskit-canary-report.mjs \
+            --report "$RUNNER_TEMP/exact-review-bundle/review/$PR_NUMBER.md" \
+            --repository "$TARGET_REPO" \
+            --item-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA"
+
+      - name: Validate publisher configuration
+        shell: bash
+        env:
+          APP_ID: ${{ vars.CLAWSWEEPER_APP_ID }}
+          APP_BOT_LOGIN: ${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}
+        run: |
+          set -euo pipefail
+          [[ "$APP_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$APP_BOT_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]]
+
+      - name: Mint the repository-scoped publication preflight token
+        id: publish-preflight-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
+          owner: dinkuskit
+          repositories: blocks
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+
+      - name: Recheck the live tuple before requesting write capability
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.publish-preflight-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          repo_json="$(gh api "repos/$TARGET_REPO")"
+          pull_json="$(gh api "repos/$TARGET_REPO/pulls/$PR_NUMBER")"
+          test "$(jq -r '.id' <<<"$repo_json")" = "$TARGET_REPOSITORY_ID"
+          test "$(jq -r '.full_name' <<<"$repo_json")" = "$TARGET_REPO"
+          test "$(jq -r '.state' <<<"$pull_json")" = "open"
+          test "$(jq -r '.base.repo.full_name' <<<"$pull_json")" = "$TARGET_REPO"
+          test "$(jq -r '.base.ref' <<<"$pull_json")" = "$BASE_REF"
+          test "$(jq -r '.head.repo.full_name' <<<"$pull_json")" = "$HEAD_REPO"
+          test "$(jq -r '.head.sha' <<<"$pull_json")" = "$HEAD_SHA"
+          test "$(gh api "repos/$TARGET_REPO/git/ref/heads/$BASE_REF" --jq '.object.sha')" = "$BASE_SHA"
+          test "$(gh api "repos/$TARGET_REPO/compare/$BASE_SHA...$HEAD_SHA" --jq '.merge_base_commit.sha')" = "$MERGE_BASE_SHA"
+
+      - name: Mint the repository-scoped target publisher token
+        id: target-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
+          owner: dinkuskit
+          repositories: blocks
+          permission-checks: read
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          permission-statuses: read
+
+      - name: Mint the state-only writer token
+        id: state-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
+          owner: dinkuskit
+          repositories: clawsweeper-state
+          permission-contents: write
+
+      - name: Check out the isolated DinkusKit state branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.STATE_REPO }}
+          ref: ${{ env.STATE_BRANCH }}
+          token: ${{ steps.state-token.outputs.token }}
+          path: state
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Apply only native comment and label decisions
+        working-directory: clawsweeper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.target-token.outputs.token }}
+          CLAWSWEEPER_COMMENT_AUTHOR_LOGIN: ${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            ../state/records/dinkuskit-blocks/items \
+            ../state/records/dinkuskit-blocks/closed \
+            ../state/records/dinkuskit-blocks/plans \
+            ../state/records/dinkuskit-blocks/decision-packets \
+            ../publication-proof
+          pnpm run apply-artifacts -- \
+            --target-repo "$TARGET_REPO" \
+            --artifact-dir "$RUNNER_TEMP/exact-review-bundle/review" \
+            --items-dir ../state/records/dinkuskit-blocks/items \
+            --closed-dir ../state/records/dinkuskit-blocks/closed \
+            --plans-dir ../state/records/dinkuskit-blocks/plans \
+            --decision-packets-dir ../state/records/dinkuskit-blocks/decision-packets \
+            --skip-reconcile
+          pnpm run apply-decisions -- \
+            --target-repo "$TARGET_REPO" \
+            --items-dir ../state/records/dinkuskit-blocks/items \
+            --closed-dir ../state/records/dinkuskit-blocks/closed \
+            --plans-dir ../state/records/dinkuskit-blocks/plans \
+            --decision-packets-dir ../state/records/dinkuskit-blocks/decision-packets \
+            --item-numbers "$PR_NUMBER" \
+            --sync-comments-only \
+            --suppress-automation-markers \
+            --comment-sync-min-age-days 0 \
+            --apply-kind all \
+            --limit 0 \
+            --processed-limit 1 \
+            --max-runtime-ms 600000 \
+            --report-path ../publication-proof/apply-report.json \
+            --artifact-dir ../publication-proof/apply-artifacts
+          cp "$RUNNER_TEMP/exact-review-bundle/manifest.json" ../publication-proof/manifest.json
+          cp "$RUNNER_TEMP/exact-review-bundle/review/$PR_NUMBER.md" ../publication-proof/native-review.md
+
+      - name: Verify the native publication and unchanged head
+        working-directory: clawsweeper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.target-token.outputs.token }}
+          APP_BOT_LOGIN: ${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "repos/$TARGET_REPO/issues/$PR_NUMBER/comments?per_page=100" \
+            | jq 'add' > ../publication-proof/comments.json
+          gh api "repos/$TARGET_REPO/issues/$PR_NUMBER" \
+            --jq '[.labels[].name]' > ../publication-proof/labels.json
+          test "$(gh api "repos/$TARGET_REPO/pulls/$PR_NUMBER" --jq '.state')" = "open"
+          test "$(gh api "repos/$TARGET_REPO/pulls/$PR_NUMBER" --jq '.head.sha')" = "$HEAD_SHA"
+          test "$(gh api "repos/$TARGET_REPO/git/ref/heads/$BASE_REF" --jq '.object.sha')" = "$BASE_SHA"
+          node scripts/validate-dinkuskit-canary-publication.mjs \
+            --report "../state/records/dinkuskit-blocks/items/$PR_NUMBER.md" \
+            --apply-report ../publication-proof/apply-report.json \
+            --comments ../publication-proof/comments.json \
+            --labels ../publication-proof/labels.json \
+            --app-bot-login "$APP_BOT_LOGIN" \
+            --repository "$TARGET_REPO" \
+            --item-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA"
+
+      - name: Commit and push the public DinkusKit state record
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.state-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          hooks_dir="$RUNNER_TEMP/disabled-state-hooks"
+          mkdir -p "$hooks_dir"
+          git -C state config core.hooksPath "$hooks_dir"
+          git -C state config user.name "dinkuskit-clawsweeper[bot]"
+          git -C state config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C state add -- records/dinkuskit-blocks
+          if git -C state diff --cached --quiet; then
+            echo "The exact state record was already current."
+            exit 0
+          fi
+          git -C state commit -m "review: publish dinkuskit/blocks#$PR_NUMBER at ${HEAD_SHA:0:12}"
+          gh auth setup-git
+          git -C state push origin "HEAD:$STATE_BRANCH"
+
+      - name: Upload publication proof
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dinkuskit-native-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: publication-proof
+          include-hidden-files: false
+          if-no-files-found: warn
+          retention-days: 30
