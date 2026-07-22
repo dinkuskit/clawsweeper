@@ -42,10 +42,13 @@ const args = process.argv.slice(2);
 const promptIndex = args.indexOf("-p");
 const prompt = promptIndex >= 0 ? args[promptIndex + 1] : null;
 const requestPath = prompt?.split("\\n")[1] ?? null;
+const responsePermission = args.find((arg) => arg.startsWith("--allow-tool=write("));
+const responsePath = responsePermission?.slice("--allow-tool=write(".length, -1) ?? null;
 writeFileSync(process.env.FAKE_CAPTURE, JSON.stringify({
   args,
   prompt,
   requestPath,
+  responsePath,
   request: requestPath ? readFileSync(requestPath, "utf8") : null,
   home: process.env.COPILOT_HOME,
 }));
@@ -55,6 +58,9 @@ if (process.env.FAKE_FAIL === "1") {
       "transport failed COPILOT_GITHUB_TOKEN=" + process.env.COPILOT_GITHUB_TOKEN,
   );
   process.exit(7);
+}
+if (process.env.FAKE_WRITE_RESPONSE === "1" && responsePath) {
+  writeFileSync(responsePath, process.env.FAKE_FILE_RESPONSE);
 }
 process.stdout.write(process.env.FAKE_RESPONSE);
 `,
@@ -109,6 +115,7 @@ function runAdapter(
     error?: string;
     fail?: boolean;
     input?: string;
+    fileResponse?: string;
     response?: string;
   } = {},
 ) {
@@ -129,7 +136,9 @@ function runAdapter(
       FAKE_CAPTURE: fixture.capture,
       FAKE_ERROR: options.error,
       FAKE_FAIL: options.fail ? "1" : "0",
+      FAKE_FILE_RESPONSE: options.fileResponse ?? "",
       FAKE_RESPONSE: options.response ?? '{"decision":"keep_open"}',
+      FAKE_WRITE_RESPONSE: options.fileResponse === undefined ? "0" : "1",
     },
     input: options.input ?? "Review the admitted pull request.",
     encoding: "utf8",
@@ -148,13 +157,15 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
       args: string[];
       prompt: string;
       requestPath: string;
+      responsePath: string;
       request: string;
       home: string;
     };
     assert.ok(capture.args.includes("--model=gpt-5.6-terra"));
     assert.ok(capture.args.includes("--effort=high"));
-    assert.ok(capture.args.includes("--available-tools=view,glob,grep"));
+    assert.ok(capture.args.includes("--available-tools=view,glob,grep,create"));
     assert.ok(capture.args.includes("--allow-tool=view,glob,grep"));
+    assert.ok(capture.args.includes(`--allow-tool=write(${capture.responsePath})`));
     assert.ok(capture.args.includes("--disable-builtin-mcps"));
     assert.ok(capture.args.includes("--disallow-temp-dir"));
     assert.ok(capture.args.includes("--secret-env-vars=COPILOT_GITHUB_TOKEN"));
@@ -162,7 +173,7 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     assert.ok(!capture.args.some((arg) => /fast/i.test(arg)));
     assert.deepEqual(
       capture.args.filter((arg) => arg.startsWith("--allow-tool")),
-      ["--allow-tool=view,glob,grep"],
+      ["--allow-tool=view,glob,grep", `--allow-tool=write(${capture.responsePath})`],
     );
     assert.match(capture.prompt, /complete request in this admitted read-only file/);
     assert.ok(Buffer.byteLength(capture.prompt) < 4_096);
@@ -170,7 +181,26 @@ test("Copilot adapter maps only the admitted Terra high read-only invocation", (
     assert.match(capture.request, /Required machine-readable response/);
     assert.match(capture.request, /"additionalProperties": false/);
     assert.equal(existsSync(capture.requestPath), false);
+    assert.equal(existsSync(capture.responsePath), false);
     assert.equal(capture.home, realpathSync(fixture.copilotHome));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Copilot adapter prefers the exact path-scoped response file over chat prose", () => {
+  const fixture = createFixture();
+  try {
+    const result = runAdapter(fixture, {
+      fileResponse: '{"decision":"keep_open"}',
+      response: "The review is complete.",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(fixture.output, "utf8"), '{"decision":"keep_open"}\n');
+    const capture = JSON.parse(readFileSync(fixture.capture, "utf8")) as {
+      responsePath: string;
+    };
+    assert.equal(existsSync(capture.responsePath), false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

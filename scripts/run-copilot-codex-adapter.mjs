@@ -3,6 +3,8 @@
 import { spawnSync } from "node:child_process";
 import {
   constants as fsConstants,
+  existsSync,
+  fstatSync,
   openSync,
   readFileSync,
   realpathSync,
@@ -310,6 +312,11 @@ const combinedPrompt = `${prompt}\n\n## Required machine-readable response\nRetu
 // request in the already-admitted read-only scratch tree and pass only a small,
 // deterministic bootstrap prompt to Copilot.
 const requestPath = join(scratchRoot, ".clawsweeper-copilot-request.md");
+const responsePath = join(scratchRoot, ".clawsweeper-copilot-response.json");
+if (existsSync(responsePath)) {
+  recordCopilotFailure("the bounded Copilot response path already existed", null, "execution");
+  fail("the bounded Copilot response path already existed", 1);
+}
 try {
   const fd = openSync(
     requestPath,
@@ -326,7 +333,9 @@ const bootstrapPrompt = [
   "Perform the ClawSweeper review from the complete request in this admitted read-only file:",
   requestPath,
   "Use the view tool repeatedly until you have read the entire file, including the response schema.",
-  "Follow that request exactly and return only its required JSON object.",
+  "Follow that request exactly, then use the create tool to write only the required JSON object to:",
+  responsePath,
+  "Do not create or modify any other file. Do not finish until the response file exists.",
 ].join("\n");
 if (Buffer.byteLength(bootstrapPrompt) > MAX_BOOTSTRAP_PROMPT_BYTES) {
   try {
@@ -351,8 +360,9 @@ const copilotArgs = [
   "--no-remote-export",
   "--disable-builtin-mcps",
   "--disallow-temp-dir",
-  "--available-tools=view,glob,grep",
+  "--available-tools=view,glob,grep,create",
   "--allow-tool=view,glob,grep",
+  `--allow-tool=write(${responsePath})`,
   "--secret-env-vars=COPILOT_GITHUB_TOKEN",
   "--max-ai-credits=50",
   "--stream=off",
@@ -392,11 +402,6 @@ if (result.error) {
   recordCopilotFailure(result.error.message, null, "execution");
   fail(`Copilot CLI failed to execute: ${result.error.message}`, 1);
 }
-if (result.status !== 0) {
-  recordCopilotFailure(result.stderr, result.status);
-  const detail = sanitize(result.stderr).slice(-MAX_ERROR_BYTES).trim();
-  fail(`Copilot CLI exited with status ${result.status}${detail ? `: ${detail}` : ""}`, 1);
-}
 if (Buffer.byteLength(result.stdout ?? "") > MAX_RESPONSE_BYTES) {
   recordCopilotFailure(
     "Copilot CLI exceeded the bounded response contract",
@@ -405,8 +410,44 @@ if (Buffer.byteLength(result.stdout ?? "") > MAX_RESPONSE_BYTES) {
   );
   fail("Copilot CLI exceeded the bounded response contract", 1);
 }
-const decision = extractSingleJsonObject(result.stdout ?? "");
+let response = result.stdout ?? "";
+if (existsSync(responsePath)) {
+  let responseFd;
+  try {
+    responseFd = openSync(responsePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const responseStats = fstatSync(responseFd);
+    if (!responseStats.isFile() || responseStats.size > MAX_RESPONSE_BYTES) {
+      throw new Error("invalid bounded response file");
+    }
+    response = readFileSync(responseFd, "utf8");
+  } catch {
+    try {
+      unlinkSync(responsePath);
+    } catch {
+      // The bounded response failure remains authoritative.
+    }
+    recordCopilotFailure(
+      "Copilot CLI wrote an invalid bounded response file",
+      0,
+      "response_contract",
+    );
+    fail("Copilot CLI wrote an invalid bounded response file", 1);
+  } finally {
+    if (responseFd !== undefined) closeSync(responseFd);
+  }
+  try {
+    unlinkSync(responsePath);
+  } catch {
+    // The parsed response remains authoritative; the workflow revokes the scratch tree.
+  }
+}
+const decision = extractSingleJsonObject(response);
 if (!decision) {
+  if (result.status !== 0) {
+    recordCopilotFailure(result.stderr, result.status);
+    const detail = sanitize(result.stderr).slice(-MAX_ERROR_BYTES).trim();
+    fail(`Copilot CLI exited with status ${result.status}${detail ? `: ${detail}` : ""}`, 1);
+  }
   recordCopilotFailure("Copilot CLI returned invalid JSON", 0, "response_contract");
   fail("Copilot CLI did not return one unambiguous JSON object", 1);
 }
