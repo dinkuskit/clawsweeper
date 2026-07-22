@@ -16,6 +16,10 @@ on:
         description: Exact pull request head SHA to review
         required: true
         type: string
+      engine_sha:
+        description: Exact ClawSweeper workflow and engine commit SHA
+        required: true
+        type: string
       publish:
         description: Publish the native comment, labels, and durable state record
         required: true
@@ -33,6 +37,10 @@ on:
         type: string
       expected_head_sha:
         description: Exact pull request head SHA to review
+        required: true
+        type: string
+      engine_sha:
+        description: Exact ClawSweeper workflow and engine commit SHA
         required: true
         type: string
       publish:
@@ -188,8 +196,8 @@ jobs:
       - name: Check out the trusted ClawSweeper engine
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
+          repository: dinkuskit/clawsweeper
+          ref: ${{ inputs.engine_sha }}
           path: clawsweeper
           fetch-depth: 0
           persist-credentials: false
@@ -203,9 +211,10 @@ jobs:
         working-directory: clawsweeper
         shell: bash
         env:
-          ENGINE_SHA: ${{ job.workflow_sha }}
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
+          [[ "$ENGINE_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$ENGINE_SHA"
           git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
           corepack enable
@@ -439,7 +448,7 @@ jobs:
         working-directory: /opt/dinkuskit-clawsweeper-canary/engine
         shell: bash
         env:
-          ENGINE_SHA: ${{ job.workflow_sha }}
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
           decision="$(jq -nc \
@@ -511,8 +520,8 @@ jobs:
       - name: Check out the trusted ClawSweeper publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
+          repository: dinkuskit/clawsweeper
+          ref: ${{ inputs.engine_sha }}
           path: clawsweeper
           fetch-depth: 0
           persist-credentials: false
@@ -526,9 +535,10 @@ jobs:
         working-directory: clawsweeper
         shell: bash
         env:
-          ENGINE_SHA: ${{ job.workflow_sha }}
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
+          [[ "$ENGINE_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$ENGINE_SHA"
           git merge-base --is-ancestor "$UPSTREAM_BASE_SHA" HEAD
           corepack enable
@@ -547,7 +557,7 @@ jobs:
         working-directory: clawsweeper
         shell: bash
         env:
-          ENGINE_SHA: ${{ job.workflow_sha }}
+          ENGINE_SHA: ${{ inputs.engine_sha }}
         run: |
           set -euo pipefail
           decision="$(jq -nc \

@@ -244,19 +244,21 @@ test("target checkout completes before Copilot installation and ignores ambient 
   assert.match(wrapper, /GIT_TERMINAL_PROMPT=0/);
 });
 
-test("reusable jobs check out and bind the called workflow commit, not the caller commit", () => {
+test("reusable jobs check out and bind the explicit immutable engine commit", () => {
   for (const stepName of [
     "Check out the trusted ClawSweeper engine",
     "Check out the trusted ClawSweeper publisher",
   ]) {
     const jobName = stepName.includes("engine") ? "review" : "publish";
     const checkout = step(jobName, stepName);
-    assert.equal(checkout.with?.repository, "${{ job.workflow_repository }}");
-    assert.equal(checkout.with?.ref, "${{ job.workflow_sha }}");
+    assert.equal(checkout.with?.repository, "dinkuskit/clawsweeper");
+    assert.equal(checkout.with?.ref, "${{ inputs.engine_sha }}");
   }
-  assert.match(source, /ENGINE_SHA: \$\{\{ job\.workflow_sha \}\}/);
+  assert.match(source, /engine_sha:[\s\S]*required: true/);
+  assert.match(source, /ENGINE_SHA: \$\{\{ inputs\.engine_sha \}\}/);
+  assert.match(source, /\[\[ "\$ENGINE_SHA" =~ \^\[0-9a-f\]\{40\}\$ \]\]/);
   assert.match(source, /EXACT_REVIEW_SOURCE_SHA="\$ENGINE_SHA"/);
-  assert.doesNotMatch(source, /GITHUB_(?:WORKFLOW_)?SHA|github\.sha/);
+  assert.doesNotMatch(source, /GITHUB_(?:WORKFLOW_)?SHA|github\.sha|job\.workflow_/);
 });
 
 test("public canary disables trusted-host media preprocessing in the native engine", () => {
