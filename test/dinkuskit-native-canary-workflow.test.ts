@@ -21,6 +21,10 @@ type Job = {
 type Workflow = {
   on?: Record<string, unknown>;
   permissions?: Record<string, string>;
+  concurrency?: {
+    group?: string;
+    "cancel-in-progress"?: boolean;
+  };
   env?: Record<string, string>;
   jobs?: Record<string, Job>;
 };
@@ -95,6 +99,14 @@ test("DinkusKit canary is reusable and binds a caller-supplied exact public repo
   assert.doesNotMatch(source, /dinkuskit\/blocks|PR_NUMBER" != "7"/);
   assert.match(source, /expected_base_sha must be a lowercase 40-character SHA/);
   assert.match(source, /expected_head_sha must be a lowercase 40-character SHA/);
+});
+
+test("shared state-branch publishers remain globally serialized", () => {
+  assert.equal(workflow.env?.STATE_REPO, "dinkuskit/clawsweeper-state");
+  assert.equal(workflow.env?.STATE_BRANCH, "state");
+  assert.equal(workflow.concurrency?.group, "dinkuskit-native-clawsweeper-state-writer");
+  assert.equal(workflow.concurrency?.["cancel-in-progress"], false);
+  assert.doesNotMatch(workflow.concurrency?.group ?? "", /target_repository/);
 });
 
 test("review and publisher keep Copilot and write credentials in separate steps and jobs", () => {

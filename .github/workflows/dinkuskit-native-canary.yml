@@ -73,7 +73,10 @@ on:
 permissions: {}
 
 concurrency:
-  group: dinkuskit-native-clawsweeper-${{ inputs.target_repository }}
+  # Every target publishes to the same clawsweeper-state/state branch.
+  # Keep all publishers serialized until state writes gain their own
+  # conflict-safe retry/rebase contract.
+  group: dinkuskit-native-clawsweeper-state-writer
   cancel-in-progress: false
 
 env:
