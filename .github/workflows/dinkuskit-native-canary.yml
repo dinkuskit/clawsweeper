@@ -3,11 +3,18 @@ name: DinkusKit native ClawSweeper canary
 on:
   workflow_dispatch:
     inputs:
-      pr_number:
-        description: Pull request number (the first canary is restricted to blocks#7)
+      target_repository:
+        description: Exact public repository name inside the dinkuskit organization
         required: true
         type: string
-        default: "7"
+      target_repository_id:
+        description: Exact numeric GitHub repository ID
+        required: true
+        type: string
+      pr_number:
+        description: Exact open pull request number to review
+        required: true
+        type: string
       expected_base_sha:
         description: Exact current main SHA to review against
         required: true
@@ -27,8 +34,16 @@ on:
         default: false
   workflow_call:
     inputs:
+      target_repository:
+        description: Exact public repository name inside the dinkuskit organization
+        required: true
+        type: string
+      target_repository_id:
+        description: Exact numeric GitHub repository ID
+        required: true
+        type: string
       pr_number:
-        description: Pull request number (the first canary is restricted to blocks#7)
+        description: Exact open pull request number to review
         required: true
         type: string
       expected_base_sha:
@@ -58,12 +73,17 @@ on:
 permissions: {}
 
 concurrency:
-  group: dinkuskit-native-clawsweeper-canary
+  # Every target publishes to the same clawsweeper-state/state branch.
+  # Keep all publishers serialized until state writes gain their own
+  # conflict-safe retry/rebase contract.
+  group: dinkuskit-native-clawsweeper-state-writer
   cancel-in-progress: false
 
 env:
-  TARGET_REPO: dinkuskit/blocks
-  TARGET_REPOSITORY_ID: "1306882611"
+  TARGET_REPOSITORY: ${{ inputs.target_repository }}
+  TARGET_REPO: ${{ format('dinkuskit/{0}', inputs.target_repository) }}
+  TARGET_REPOSITORY_ID: ${{ inputs.target_repository_id }}
+  STATE_SLUG: ${{ format('dinkuskit-{0}', inputs.target_repository) }}
   STATE_REPO: dinkuskit/clawsweeper-state
   STATE_BRANCH: state
   UPSTREAM_BASE_SHA: e9423a404ffe6527373b84053e1df4d0d8bbd77b
@@ -75,7 +95,7 @@ env:
 
 jobs:
   admit:
-    name: Admit exact blocks PR
+    name: Admit exact DinkusKit PR
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -93,6 +113,36 @@ jobs:
       EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
       PR_NUMBER: ${{ inputs.pr_number }}
     steps:
+      - name: Validate immutable caller inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$TARGET_REPOSITORY:$TARGET_REPOSITORY_ID" in
+            blocks:1306882611 | \
+              template-store:1306882668 | \
+              template-services:1306882701 | \
+              template-marketing:1306882756 | \
+              inventory:1307843786 | \
+              coupons:1307843842 | \
+              bundles:1307843885) ;;
+            *)
+              echo "The target repository and ID pair is not in the DinkusKit canary allowlist." >&2
+              exit 1
+              ;;
+          esac
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "pr_number must be a positive integer." >&2
+            exit 1
+          fi
+          if ! [[ "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_base_sha must be a lowercase 40-character SHA." >&2
+            exit 1
+          fi
+          if ! [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_head_sha must be a lowercase 40-character SHA." >&2
+            exit 1
+          fi
+
       - name: Mint the repository-scoped admission token
         id: admission-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -100,7 +150,7 @@ jobs:
           app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
-          repositories: blocks
+          repositories: ${{ inputs.target_repository }}
           permission-contents: read
           permission-pull-requests: read
 
@@ -111,8 +161,18 @@ jobs:
           GH_TOKEN: ${{ steps.admission-token.outputs.token }}
         run: |
           set -euo pipefail
-          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || [ "$PR_NUMBER" != "7" ]; then
-            echo "This first canary admits only dinkuskit/blocks#7." >&2
+          if ! [[ "$TARGET_REPOSITORY" =~ ^[A-Za-z0-9_.-]+$ ]] \
+            || [ "$TARGET_REPO" != "dinkuskit/$TARGET_REPOSITORY" ] \
+            || [ "$STATE_SLUG" != "dinkuskit-$TARGET_REPOSITORY" ]; then
+            echo "The target repository input is invalid." >&2
+            exit 1
+          fi
+          if ! [[ "$TARGET_REPOSITORY_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "target_repository_id must be a positive numeric GitHub repository ID." >&2
+            exit 1
+          fi
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "pr_number must be a positive integer." >&2
             exit 1
           fi
           if ! [[ "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -126,11 +186,15 @@ jobs:
 
           repo_json="$(gh api "repos/$TARGET_REPO")"
           repository_id="$(jq -r '.id' <<<"$repo_json")"
+          repository_short_name="$(jq -r '.name' <<<"$repo_json")"
           repository_name="$(jq -r '.full_name' <<<"$repo_json")"
+          default_branch="$(jq -r '.default_branch' <<<"$repo_json")"
           archived="$(jq -r '.archived' <<<"$repo_json")"
           visibility="$(jq -r '.visibility' <<<"$repo_json")"
           if [ "$repository_id" != "$TARGET_REPOSITORY_ID" ] \
+            || [ "$repository_short_name" != "$TARGET_REPOSITORY" ] \
             || [ "$repository_name" != "$TARGET_REPO" ] \
+            || [ -z "$default_branch" ] \
             || [ "$archived" != "false" ] \
             || [ "$visibility" != "public" ]; then
             echo "Target repository identity or state is not admitted." >&2
@@ -143,8 +207,10 @@ jobs:
           base_ref="$(jq -r '.base.ref' <<<"$pull_json")"
           head_repo="$(jq -r '.head.repo.full_name' <<<"$pull_json")"
           head_sha="$(jq -r '.head.sha' <<<"$pull_json")"
-          if [ "$state" != "open" ] || [ "$base_repo" != "$TARGET_REPO" ] || [ "$base_ref" != "main" ]; then
-            echo "The admitted target must be an open pull request into dinkuskit/blocks main." >&2
+          if [ "$state" != "open" ] \
+            || [ "$base_repo" != "$TARGET_REPO" ] \
+            || [ "$base_ref" != "$default_branch" ]; then
+            echo "The admitted target must be an open pull request into the repository default branch." >&2
             exit 1
           fi
           if ! [[ "$head_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
@@ -365,7 +431,7 @@ jobs:
           app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
-          repositories: blocks
+          repositories: ${{ inputs.target_repository }}
           permission-checks: read
           permission-contents: read
           permission-issues: read
@@ -673,7 +739,7 @@ jobs:
           app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
-          repositories: blocks
+          repositories: ${{ inputs.target_repository }}
           permission-contents: read
           permission-issues: read
           permission-pull-requests: read
@@ -703,7 +769,7 @@ jobs:
           app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
-          repositories: blocks
+          repositories: ${{ inputs.target_repository }}
           permission-checks: read
           permission-contents: read
           permission-issues: write
@@ -738,26 +804,27 @@ jobs:
           CLAWSWEEPER_COMMENT_AUTHOR_LOGIN: ${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}
         run: |
           set -euo pipefail
+          state_root="../state/records/$STATE_SLUG"
           mkdir -p \
-            ../state/records/dinkuskit-blocks/items \
-            ../state/records/dinkuskit-blocks/closed \
-            ../state/records/dinkuskit-blocks/plans \
-            ../state/records/dinkuskit-blocks/decision-packets \
+            "$state_root/items" \
+            "$state_root/closed" \
+            "$state_root/plans" \
+            "$state_root/decision-packets" \
             ../publication-proof
           pnpm run apply-artifacts -- \
             --target-repo "$TARGET_REPO" \
             --artifact-dir "$RUNNER_TEMP/exact-review-bundle/review" \
-            --items-dir ../state/records/dinkuskit-blocks/items \
-            --closed-dir ../state/records/dinkuskit-blocks/closed \
-            --plans-dir ../state/records/dinkuskit-blocks/plans \
-            --decision-packets-dir ../state/records/dinkuskit-blocks/decision-packets \
+            --items-dir "$state_root/items" \
+            --closed-dir "$state_root/closed" \
+            --plans-dir "$state_root/plans" \
+            --decision-packets-dir "$state_root/decision-packets" \
             --skip-reconcile
           pnpm run apply-decisions -- \
             --target-repo "$TARGET_REPO" \
-            --items-dir ../state/records/dinkuskit-blocks/items \
-            --closed-dir ../state/records/dinkuskit-blocks/closed \
-            --plans-dir ../state/records/dinkuskit-blocks/plans \
-            --decision-packets-dir ../state/records/dinkuskit-blocks/decision-packets \
+            --items-dir "$state_root/items" \
+            --closed-dir "$state_root/closed" \
+            --plans-dir "$state_root/plans" \
+            --decision-packets-dir "$state_root/decision-packets" \
             --item-numbers "$PR_NUMBER" \
             --sync-comments-only \
             --suppress-automation-markers \
@@ -779,6 +846,7 @@ jobs:
           APP_BOT_LOGIN: ${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}
         run: |
           set -euo pipefail
+          state_root="../state/records/$STATE_SLUG"
           gh api --paginate --slurp \
             "repos/$TARGET_REPO/issues/$PR_NUMBER/comments?per_page=100" \
             | jq 'add' > ../publication-proof/comments.json
@@ -788,7 +856,7 @@ jobs:
           test "$(gh api "repos/$TARGET_REPO/pulls/$PR_NUMBER" --jq '.head.sha')" = "$HEAD_SHA"
           test "$(gh api "repos/$TARGET_REPO/git/ref/heads/$BASE_REF" --jq '.object.sha')" = "$BASE_SHA"
           node scripts/validate-dinkuskit-canary-publication.mjs \
-            --report "../state/records/dinkuskit-blocks/items/$PR_NUMBER.md" \
+            --report "$state_root/items/$PR_NUMBER.md" \
             --apply-report ../publication-proof/apply-report.json \
             --comments ../publication-proof/comments.json \
             --labels ../publication-proof/labels.json \
@@ -809,12 +877,12 @@ jobs:
           git -C state config core.hooksPath "$hooks_dir"
           git -C state config user.name "dinkuskit-clawsweeper[bot]"
           git -C state config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C state add -- records/dinkuskit-blocks
+          git -C state add -- "records/$STATE_SLUG"
           if git -C state diff --cached --quiet; then
             echo "The exact state record was already current."
             exit 0
           fi
-          git -C state commit -m "review: publish dinkuskit/blocks#$PR_NUMBER at ${HEAD_SHA:0:12}"
+          git -C state commit -m "review: publish $TARGET_REPO#$PR_NUMBER at ${HEAD_SHA:0:12}"
           gh auth setup-git
           git -C state push origin "HEAD:$STATE_BRANCH"
 
