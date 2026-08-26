@@ -124,7 +124,8 @@ jobs:
               template-marketing:1306882756 | \
               inventory:1307843786 | \
               coupons:1307843842 | \
-              bundles:1307843885) ;;
+              bundles:1307843885 | \
+              commerce:1347692514) ;;
             *)
               echo "The target repository and ID pair is not in the DinkusKit canary allowlist." >&2
               exit 1

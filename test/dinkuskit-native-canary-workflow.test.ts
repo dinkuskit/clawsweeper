@@ -89,6 +89,7 @@ test("DinkusKit canary is reusable and binds a caller-supplied exact public repo
     "inventory:1307843786",
     "coupons:1307843842",
     "bundles:1307843885",
+    "commerce:1347692514",
   ]) {
     assert.match(inputValidation, new RegExp(binding));
   }
