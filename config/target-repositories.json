@@ -134,6 +134,19 @@
       "package_manager": "pnpm",
       "validation_commands": [],
       "changed_gate": null
+    },
+    {
+      "target_repo": "dinkuskit/commerce",
+      "display_name": "DinkusKit Commerce",
+      "checkout_dir": "dinkuskit-commerce",
+      "prompt_note": "Use the DinkusKit Commerce source tree and current default branch. Review conservatively for catalog identity, authoritative pricing and sellability, single inventory-provider binding, cart and checkout orchestration, receipt and order integrity, secret or customer-data hygiene, and package boundaries. This target is review-only: do not auto-close issues or pull requests.",
+      "apply_close_rules": {
+        "issue": [],
+        "pull_request": []
+      },
+      "package_manager": "npm",
+      "validation_commands": [],
+      "changed_gate": null
     }
   ],
   "generic_fallbacks": [
