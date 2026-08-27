@@ -828,18 +828,18 @@ value, and accepts an explicit `--test-concurrency` override for diagnostics.
 
 ## GitHub Actions Setup
 
-Required secrets:
+Required configuration:
 
-- `OPENAI_API_KEY`: OpenAI API key used by the per-job local Codex Responses
-  proxy. Codex subprocesses inherit only the proxy-backed `CODEX_HOME`, not the
-  raw API key.
-- `CLAWSWEEPER_APP_CLIENT_ID`: public GitHub App client ID for `clawsweeper`.
-  Currently `Iv23liOECG0slfuhz093`.
-- `CLAWSWEEPER_APP_PRIVATE_KEY`: private key for `clawsweeper`; plan/review
-  jobs use a short-lived GitHub App installation token for read-heavy target API
-  calls, commit review uses a read-scoped target token while Codex runs, and
-  apply/comment-sync/check jobs use the app token for comments, closes, and
-  optional checks.
+- Actions secret `OPENAI_API_KEY`: OpenAI API key used by the per-job local
+  Codex Responses proxy. Codex subprocesses inherit only the proxy-backed
+  `CODEX_HOME`, not the raw API key.
+- Actions variable `CLAWSWEEPER_APP_CLIENT_ID`: public GitHub App client ID for
+  `clawsweeper`. Currently `Iv23liOECG0slfuhz093`.
+- Actions secret `CLAWSWEEPER_APP_PRIVATE_KEY`: private key for `clawsweeper`;
+  plan/review jobs use a short-lived GitHub App installation token for
+  read-heavy target API calls, commit review uses a read-scoped target token
+  while Codex runs, and apply/comment-sync/check jobs use the app token for
+  comments, closes, and optional checks.
   Keep App credentials scoped to the `actions/create-github-app-token` step.
   Review shards run Codex over attacker-controlled issue/PR text, so
   `codexEnv()` also strips these App variables before spawning Codex.

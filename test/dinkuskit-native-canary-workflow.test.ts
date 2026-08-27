@@ -198,6 +198,32 @@ test("all external actions in the canary use immutable commit pins", () => {
   }
 });
 
+test("all GitHub App token mints use the Client ID and validate public App identity", () => {
+  const deprecatedInput = ["app", "id"].join("-");
+  const legacyVariable = ["CLAWSWEEPER", "APP", "ID"].join("_");
+  const tokenSteps = Object.values(workflow.jobs ?? {})
+    .flatMap((candidate) => candidate.steps ?? [])
+    .filter((candidate) => candidate.uses?.startsWith("actions/create-github-app-token@"));
+  assert.equal(tokenSteps.length, 5);
+  for (const tokenStep of tokenSteps) {
+    assert.equal(tokenStep.with?.["client-id"], "${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}");
+    assert.ok(!(deprecatedInput in (tokenStep.with ?? {})), tokenStep.name);
+  }
+  assert.doesNotMatch(source, new RegExp(deprecatedInput));
+  assert.doesNotMatch(source, new RegExp(legacyVariable));
+
+  const validation = step("publish", "Validate publisher configuration");
+  assert.deepEqual(validation.env, {
+    APP_CLIENT_ID: "${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}",
+    APP_BOT_LOGIN: "${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}",
+  });
+  assert.match(validation.run ?? "", /\[\[ "\$APP_CLIENT_ID" =~ \^Iv\[A-Za-z0-9\]\{18\}\$ \]\]/);
+  assert.match(
+    validation.run ?? "",
+    /\[\[ "\$APP_BOT_LOGIN" =~ \^\[A-Za-z0-9-\]\+\\\[bot\\\]\$ \]\]/,
+  );
+});
+
 test("publisher requests only target comment/label and isolated state capabilities", () => {
   const publish = jobSource("publish");
   assert.match(publish, /permission-contents":"read/);
