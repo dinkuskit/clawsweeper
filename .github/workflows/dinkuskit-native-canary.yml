@@ -148,7 +148,7 @@ jobs:
         id: admission-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          client-id: ${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
           repositories: ${{ inputs.target_repository }}
@@ -429,7 +429,7 @@ jobs:
         id: review-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          client-id: ${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
           repositories: ${{ inputs.target_repository }}
@@ -726,18 +726,18 @@ jobs:
       - name: Validate publisher configuration
         shell: bash
         env:
-          APP_ID: ${{ vars.CLAWSWEEPER_APP_ID }}
+          APP_CLIENT_ID: ${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}
           APP_BOT_LOGIN: ${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}
         run: |
           set -euo pipefail
-          [[ "$APP_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$APP_CLIENT_ID" =~ ^Iv[A-Za-z0-9]{18}$ ]]
           [[ "$APP_BOT_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]]
 
       - name: Mint the repository-scoped publication preflight token
         id: publish-preflight-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          client-id: ${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
           repositories: ${{ inputs.target_repository }}
@@ -767,7 +767,7 @@ jobs:
         id: target-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          client-id: ${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
           repositories: ${{ inputs.target_repository }}
@@ -781,7 +781,7 @@ jobs:
         id: state-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.CLAWSWEEPER_APP_ID }}
+          client-id: ${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}
           private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
           owner: dinkuskit
           repositories: clawsweeper-state
