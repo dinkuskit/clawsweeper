@@ -69,6 +69,9 @@ writeFileSync(process.env.FAKE_CAPTURE, JSON.stringify({
   request: requestPath ? readFileSync(requestPath, "utf8") : null,
   home: process.env.COPILOT_HOME,
 }));
+if (process.env.FAKE_SIGNAL === "1") {
+  process.kill(process.pid, "SIGKILL");
+}
 if (process.env.FAKE_FAIL === "1") {
   process.stderr.write(
     process.env.FAKE_ERROR ??
@@ -136,6 +139,7 @@ function runAdapter(
     input?: string;
     fileResponse?: string | null;
     response?: string;
+    signal?: boolean;
   } = {},
 ) {
   const fileResponse =
@@ -158,6 +162,7 @@ function runAdapter(
       FAKE_CAPTURE: fixture.capture,
       FAKE_ERROR: options.error,
       FAKE_FAIL: options.fail ? "1" : "0",
+      FAKE_SIGNAL: options.signal ? "1" : "0",
       FAKE_FILE_RESPONSE: fileResponse ?? "",
       FAKE_RESPONSE: options.response ?? '{"decision":"keep_open"}',
       FAKE_WRITE_RESPONSE: fileResponse === null ? "0" : "1",
@@ -448,6 +453,9 @@ test("Copilot adapter records only a bounded failure category", () => {
     ["Access denied by policy settings: Copilot subscription is unavailable", "copilot_access"],
     ["The selected model is unavailable for this account", "model_access"],
     ["Unknown tool supplied to --available-tools", "cli_contract"],
+    ["Request failed with status 429: too many requests", "rate_limited"],
+    ["You have exhausted your premium requests quota", "rate_limited"],
+    ["Copilot API request failed: 502 Bad Gateway", "server_error"],
     ["Request failed with ETIMEDOUT", "network"],
   ] as const;
 
@@ -465,5 +473,21 @@ test("Copilot adapter records only a bounded failure category", () => {
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
+  }
+});
+
+test("Copilot adapter classifies signal-terminated Copilot deterministically", () => {
+  const fixture = createFixture();
+  try {
+    const result = runAdapter(fixture, { signal: true, fileResponse: null });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /terminated by signal SIGKILL/);
+    assert.deepEqual(JSON.parse(readFileSync(fixture.failureDiagnostic, "utf8")), {
+      category: "execution",
+      exit_status: null,
+      kind: "clawsweeper_copilot_failure",
+    });
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
   }
 });

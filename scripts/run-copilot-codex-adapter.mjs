@@ -140,6 +140,20 @@ function classifyCopilotFailure(value) {
     return "cli_contract";
   }
   if (
+    /\b429\b|too many requests|rate.?limit|(?:quota|premium requests?|ai credits?)[^\n]*(?:exhausted|exceeded|reached|limit)|(?:exhausted|exceeded|reached)[^\n]*(?:quota|premium requests?|ai credits?)|out of (?:ai )?credits/i.test(
+      message,
+    )
+  ) {
+    return "rate_limited";
+  }
+  if (
+    /internal server error|bad gateway|service unavailable|gateway timeout|(?:http|status|error)\s*(?::\s*)?(?:500|502|503|504)\b|\b(?:500|502|503|504)\s+(?:internal server error|bad gateway|service unavailable|gateway timeout)/i.test(
+      message,
+    )
+  ) {
+    return "server_error";
+  }
+  if (
     /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND)\b|network|fetch failed|socket hang up/i.test(
       message,
     )
@@ -411,6 +425,10 @@ if (Buffer.byteLength(result.stdout ?? "") > MAX_RESPONSE_BYTES) {
   fail("Copilot CLI exceeded the bounded response contract", 1);
 }
 if (!existsSync(responsePath)) {
+  if (result.signal) {
+    recordCopilotFailure(`Copilot CLI terminated by signal ${result.signal}`, null, "execution");
+    fail(`Copilot CLI terminated by signal ${result.signal}`, 1);
+  }
   if (result.status !== 0) {
     recordCopilotFailure(result.stderr, result.status);
     const detail = sanitize(result.stderr).slice(-MAX_ERROR_BYTES).trim();
