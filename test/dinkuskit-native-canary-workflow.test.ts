@@ -13,6 +13,7 @@ type Step = {
 
 type Job = {
   if?: string;
+  needs?: string | string[];
   env?: Record<string, unknown>;
   permissions?: Record<string, string>;
   steps?: Step[];
@@ -317,7 +318,74 @@ test("failed reviews report only bounded adapter or native failure classes", () 
   assert.match(failureClass, /native_postprocess/);
   assert.match(failureClass, /adapter_handoff/);
   assert.match(failureClass, /adapter_boundary/);
+  assert.match(failureClass, /rate_limited/);
+  assert.match(failureClass, /server_error/);
   assert.doesNotMatch(failureClass, /cat\s|copilot\.stderr|codex\.stderr/);
+});
+
+test("native review failures assemble and upload a bounded sanitized failure packet", () => {
+  const reviewSteps = job("review").steps ?? [];
+  const revokeIndex = reviewSteps.findIndex(
+    (candidate) => candidate.name === "Revoke model runtime write access",
+  );
+  const failureClassIndex = reviewSteps.findIndex(
+    (candidate) => candidate.name === "Report the bounded Copilot failure class",
+  );
+  const assembleIndex = reviewSteps.findIndex(
+    (candidate) => candidate.name === "Assemble the sanitized native review failure packet",
+  );
+  const uploadIndex = reviewSteps.findIndex(
+    (candidate) => candidate.name === "Upload the sanitized native review failure packet",
+  );
+  assert.ok(revokeIndex >= 0);
+  assert.ok(revokeIndex < failureClassIndex);
+  assert.ok(failureClassIndex < assembleIndex);
+  assert.ok(assembleIndex < uploadIndex);
+
+  const assembleStep = step("review", "Assemble the sanitized native review failure packet");
+  const uploadStep = step("review", "Upload the sanitized native review failure packet");
+  assert.equal(assembleStep.if, "${{ failure() }}");
+  assert.equal(uploadStep.if, "${{ failure() }}");
+
+  const assembleSource = JSON.stringify(assembleStep);
+  assert.match(assembleStep.run ?? "", /collect-native-review-failure-packet\.mjs/);
+  assert.doesNotMatch(
+    assembleSource,
+    /GH_TOKEN|COPILOT_GITHUB_TOKEN|APP_PRIVATE_KEY|secrets\.|create-github-app-token|gh api/,
+  );
+
+  assert.equal(
+    uploadStep.uses,
+    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", // v7
+  );
+  assert.match(
+    String(uploadStep.with?.name ?? ""),
+    /dinkuskit-native-review-failure-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/,
+  );
+  assert.equal(uploadStep.with?.["retention-days"], 30);
+  assert.equal(uploadStep.with?.["if-no-files-found"], "warn");
+
+  const runReview = step("review", "Run the native ClawSweeper review");
+  assert.match(runReview.run ?? "", /CLAWSWEEPER_REVIEW_STARTED_AT/);
+  assert.match(runReview.run ?? "", /CLAWSWEEPER_REVIEW_EXIT_STATUS/);
+  assert.match(runReview.run ?? "", /exit "\$review_status"/);
+});
+
+test("producer failure never publishes comments, labels, or state", () => {
+  const publishJob = job("publish");
+  assert.deepEqual(publishJob.needs, ["admit", "review"]);
+  assert.equal(publishJob.if, "${{ inputs.publish }}");
+  assert.doesNotMatch(publishJob.if ?? "", /always\(\)/);
+  assert.doesNotMatch(publishJob.if ?? "", /failure\(\)/);
+
+  const publishStepNames = (publishJob.steps ?? []).map((candidate) => candidate.name ?? "");
+  for (const forbidden of [
+    "Report the bounded Copilot failure class",
+    "Assemble the sanitized native review failure packet",
+    "Upload the sanitized native review failure packet",
+  ]) {
+    assert.ok(!publishStepNames.includes(forbidden), forbidden);
+  }
 });
 
 test("target checkout completes before Copilot installation and ignores ambient Git config", () => {

@@ -458,6 +458,8 @@ jobs:
             "$CANARY_ARTIFACTS/codex/proof-scratch" \
             "$CANARY_ARTIFACTS/codex/proof-scratch/$PR_NUMBER"
           export PATH="$CANARY_ROOT/model-bin:$PATH"
+          echo "CLAWSWEEPER_REVIEW_STARTED_AT=$(date -u +%s)" >> "$GITHUB_ENV"
+          review_status=0
           timeout --kill-after=30s 1500s node dist/clawsweeper.js review \
             --local-only \
             --target-repo "$TARGET_REPO" \
@@ -475,7 +477,9 @@ jobs:
             --readonly-openclaw \
             --disable-media-proof-preprocessing \
             --shard-index 0 \
-            --shard-count 1
+            --shard-count 1 || review_status=$?
+          echo "CLAWSWEEPER_REVIEW_EXIT_STATUS=$review_status" >> "$GITHUB_ENV"
+          exit "$review_status"
 
       - name: Revoke model runtime write access
         if: ${{ always() }}
@@ -526,6 +530,8 @@ jobs:
               "cli_contract",
               "response_contract",
               "network",
+              "rate_limited",
+              "server_error",
               "execution",
               "unclassified",
               "native_postprocess",
@@ -537,6 +543,51 @@ jobs:
           ' "$diagnostic" >/dev/null
           failure_class="$(jq -r '.category' "$diagnostic")"
           echo "::error title=ClawSweeper Copilot failure class::$failure_class"
+
+      - name: Assemble the sanitized native review failure packet
+        if: ${{ failure() }}
+        shell: bash
+        env:
+          ENGINE_SHA: ${{ inputs.engine_sha }}
+        run: |
+          set -euo pipefail
+          packet_dir="$RUNNER_TEMP/native-review-failure-packet"
+          collector="$GITHUB_WORKSPACE/clawsweeper/scripts/collect-native-review-failure-packet.mjs"
+          mkdir -p "$packet_dir"
+          if [ -f "$collector" ]; then
+            node "$collector" \
+              --artifact-dir "$CANARY_ARTIFACTS" \
+              --output-dir "$packet_dir" \
+              --item-number "$PR_NUMBER" \
+              --target-repo "$TARGET_REPO" \
+              --engine-sha "$ENGINE_SHA" \
+              --base-ref "$BASE_REF" \
+              --base-sha "$BASE_SHA" \
+              --head-repo "$HEAD_REPO" \
+              --head-sha "$HEAD_SHA" \
+              --merge-base-sha "$MERGE_BASE_SHA" \
+              --run-id "$GITHUB_RUN_ID" \
+              --run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --review-started-at "${CLAWSWEEPER_REVIEW_STARTED_AT:-}" \
+              --review-exit-status "${CLAWSWEEPER_REVIEW_EXIT_STATUS:-}"
+          else
+            jq -n \
+              --arg engine_sha "$ENGINE_SHA" \
+              --arg target_repo "$TARGET_REPO" \
+              --arg item_number "$PR_NUMBER" \
+              '{kind:"clawsweeper_native_review_failure_packet",failure_category:"adapter_boundary",engine_sha:$engine_sha,target_repo:$target_repo,item_number:($item_number|tonumber),notes:["the pinned engine checkout was unavailable; only minimal metadata was captured"]}' \
+              > "$packet_dir/metadata.json"
+          fi
+
+      - name: Upload the sanitized native review failure packet
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dinkuskit-native-review-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-review-failure-packet
+          include-hidden-files: false
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Validate the exact native report and live tuple
         working-directory: /opt/dinkuskit-clawsweeper-canary/engine
