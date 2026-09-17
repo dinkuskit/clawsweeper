@@ -331,6 +331,36 @@ test("upserts the admitted PR and keeps other validated DinkusKit rows", () => {
   }
 });
 
+test("retains an old valid existing row and refreshes the envelope publication clock", () => {
+  const root = fixtureRoot();
+  try {
+    const priorObservedAt = "2026-09-17T16:00:00.000Z";
+    const priorEnvelope = existingEnvelope([existingRow({ observed_at: priorObservedAt })], {
+      generated_at: priorObservedAt,
+    });
+    assert.ok(
+      NOW - Date.parse(String(priorEnvelope.generated_at)) >
+        Number(priorEnvelope.stale_after_seconds) * 1000,
+      "fixture must exceed stale_after_seconds so idle publication is the case under test",
+    );
+    const envelope = publish(root, { existingEnvelope: priorEnvelope });
+    consumerAccepts(envelope);
+    assert.equal(envelope.generated_at, GENERATED_AT);
+    assert.notEqual(envelope.generated_at, priorEnvelope.generated_at);
+    assert.equal(envelope.rows.length, 2);
+    const historical = envelope.rows.find((row) => row.pr_number === 3);
+    assert.equal(historical?.repository, "dinkuskit/inventory");
+    assert.equal(historical?.observed_at, priorObservedAt);
+    assert.ok(
+      NOW - Date.parse(String(historical?.observed_at)) > envelope.stale_after_seconds * 1000,
+    );
+    const current = envelope.rows.find((row) => row.pr_number === 7);
+    assert.equal(current?.observed_at, "2026-09-17T17:55:00.000Z");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("writes only the exact DinkusKit telemetry path under the state root", () => {
   const root = fixtureRoot();
   const stateRoot = join(root, "state");
@@ -444,7 +474,7 @@ for (const [name, mutate, message] of [
   [
     "future generated_at",
     () => ({ generatedAt: "2026-09-17T18:05:00Z" }),
-    /generated_at is stale or invalid/,
+    /generated_at is malformed or in the future/,
   ],
   [
     "local proof path in existing row",

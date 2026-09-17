@@ -393,7 +393,7 @@ export function validateTelemetryRow(value, now) {
     throw new Error("telemetry row identity is not an admitted DinkusKit review");
   }
   if (row.observed_at !== null && row.observed_at !== undefined && !isoDate(row.observed_at, now)) {
-    throw new Error("telemetry row observed_at is stale or invalid");
+    throw new Error("telemetry row observed_at is malformed or in the future");
   }
   if (!Array.isArray(row.proof_links) || row.proof_links.length > 20) {
     throw new Error("telemetry row proof_links are invalid");
@@ -438,7 +438,7 @@ export function validateTelemetryEnvelope(value, now) {
   if (feed.schema_version !== SCHEMA_VERSION) throw new Error("telemetry schema is untrusted");
   if (feed.tenant !== TENANT) throw new Error("telemetry tenant is not dinkuskit");
   const generatedAt = isoDate(feed.generated_at, now);
-  if (!generatedAt) throw new Error("telemetry generated_at is stale or invalid");
+  if (!generatedAt) throw new Error("telemetry generated_at is malformed or in the future");
   const lane = exactKeys(feed.lane, LANE_KEYS, "telemetry lane");
   if (
     lane.app_installation !== DINKUSKIT_LANE.app_installation ||
@@ -588,7 +588,7 @@ export function buildDinkuskitReviewTelemetry(options) {
   const generatedAt = options.generatedAt
     ? isoDate(options.generatedAt, now)
     : new Date(now).toISOString();
-  if (!generatedAt) throw new Error("telemetry generated_at is stale or invalid");
+  if (!generatedAt) throw new Error("telemetry generated_at is malformed or in the future");
   const staleAfterSeconds = options.staleAfterSeconds ?? DEFAULT_STALE_AFTER_SECONDS;
   if (
     !Number.isInteger(staleAfterSeconds) ||

@@ -53,9 +53,11 @@ Missing CI, OpenClaw, rating, findings, or verdict conclusions stay
 
 Existing `results/review-telemetry/dinkuskit.json` is untrusted input. The
 publisher fails closed on a symlink, oversized body, extra fields, wrong
-tenant, non-allowlisted repository, stale/future timestamp, invalid SHA, row
-cap overflow, or any secret/local-path payload. It does not copy arbitrary
-fields into state.
+tenant, non-allowlisted repository, malformed or future timestamp, invalid SHA,
+row cap overflow, or any secret/local-path payload. It does not copy arbitrary
+fields into state. An idle existing envelope is accepted: old valid historical
+rows are retained during the bounded upsert, and rejecting them would block
+first publication after an idle period.
 
 ## Envelope
 
@@ -67,8 +69,11 @@ boundaries stay DinkusKit-owned:
 - state store: `dinkuskit/clawsweeper-state@state`
 - mutation authority: `dinkuskit/clawsweeper native-canary publish job`
 
-`generated_at` is the publication clock. `stale_after_seconds` is `900`. Row
-freshness uses `observed_at` from `reviewed_at` when that timestamp is valid.
+`generated_at` is the publication clock and refreshes on each new publish.
+`stale_after_seconds` is `900`. Row freshness uses `observed_at` from
+`reviewed_at` when that timestamp is valid. A valid `observed_at` older than
+`stale_after_seconds` is kept and surfaces stale; it is not a publisher
+rejection.
 
 Proof links are GitHub https URLs only: the PR, the published review comment
 when known, and the caller workflow run when supplied. Local paths, tokens,
