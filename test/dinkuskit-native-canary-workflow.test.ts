@@ -307,9 +307,13 @@ test("Copilot runs through a token-minimal unprivileged wrapper", () => {
 test("publication state is isolated under the verified dynamic repository slug", () => {
   const publish = jobSource("publish");
   assert.match(publish, /state_root=\\"\.\.\/state\/records\/\$STATE_SLUG\\"/);
-  assert.match(publish, /git -C state add -- \\"records\/\$STATE_SLUG\\"/);
+  assert.match(
+    publish,
+    /git -C state add -- \\"records\/\$STATE_SLUG\\" \\"results\/review-telemetry\/dinkuskit\.json\\"/,
+  );
   assert.match(publish, /review: publish \$TARGET_REPO#\$PR_NUMBER/);
   assert.doesNotMatch(publish, /records\/dinkuskit-blocks/);
+  assert.doesNotMatch(publish, /git -C state add -- \.(?:\\|"|\s|$)/);
 });
 
 test("failed reviews report only bounded adapter or native failure classes", () => {
@@ -369,6 +373,47 @@ test("native review failures assemble and upload a bounded sanitized failure pac
   assert.match(runReview.run ?? "", /CLAWSWEEPER_REVIEW_STARTED_AT/);
   assert.match(runReview.run ?? "", /CLAWSWEEPER_REVIEW_EXIT_STATUS/);
   assert.match(runReview.run ?? "", /exit "\$review_status"/);
+});
+
+test("dashboard telemetry is written in the same serialized publish commit after publication validation", () => {
+  const publishJob = job("publish");
+  const publishSteps = publishJob.steps ?? [];
+  const verifyIndex = publishSteps.findIndex(
+    (candidate) => candidate.name === "Verify the native publication and unchanged head",
+  );
+  const telemetryIndex = publishSteps.findIndex(
+    (candidate) => candidate.name === "Publish DinkusKit review telemetry into the same state tree",
+  );
+  const commitIndex = publishSteps.findIndex(
+    (candidate) => candidate.name === "Commit and push the public DinkusKit state record",
+  );
+  assert.ok(verifyIndex >= 0);
+  assert.ok(verifyIndex < telemetryIndex);
+  assert.ok(telemetryIndex < commitIndex);
+  assert.deepEqual(publishJob.needs, ["admit", "review"]);
+  assert.equal(publishJob.if, "${{ inputs.publish }}");
+  assert.doesNotMatch(publishJob.if ?? "", /always\(\)/);
+  assert.doesNotMatch(publishJob.if ?? "", /failure\(\)/);
+  assert.deepEqual(Object.keys(workflow.jobs ?? {}), ["admit", "review", "publish"]);
+
+  const telemetry = step("publish", "Publish DinkusKit review telemetry into the same state tree");
+  const telemetrySource = JSON.stringify(telemetry);
+  assert.match(telemetry.run ?? "", /publish-dinkuskit-review-telemetry\.mjs/);
+  assert.match(telemetry.run ?? "", /--state-root \.\.\/state/);
+  assert.equal(telemetry.env?.ENGINE_SHA, "${{ inputs.engine_sha }}");
+  assert.match(String(telemetry.env?.WORKFLOW_RUN_URL ?? ""), /github\.run_id/);
+  assert.doesNotMatch(
+    telemetrySource,
+    /GH_TOKEN|COPILOT_GITHUB_TOKEN|APP_PRIVATE_KEY|secrets\.|create-github-app-token|gh api|OPENAI_API_KEY/,
+  );
+
+  const commit = step("publish", "Commit and push the public DinkusKit state record");
+  assert.match(
+    commit.run ?? "",
+    /git -C state add -- "records\/\$STATE_SLUG" "results\/review-telemetry\/dinkuskit\.json"/,
+  );
+  assert.equal((commit.run ?? "").match(/git -C state push/g)?.length, 1);
+  assert.doesNotMatch(commit.run ?? "", /git -C state add -- \.(?:$|\s)/);
 });
 
 test("producer failure never publishes comments, labels, or state", () => {
