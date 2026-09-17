@@ -918,6 +918,27 @@ jobs:
             --base-sha "$BASE_SHA" \
             --head-sha "$HEAD_SHA"
 
+      - name: Publish DinkusKit review telemetry into the same state tree
+        working-directory: clawsweeper
+        shell: bash
+        env:
+          ENGINE_SHA: ${{ inputs.engine_sha }}
+          WORKFLOW_RUN_URL: ${{ format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
+        run: |
+          set -euo pipefail
+          node scripts/publish-dinkuskit-review-telemetry.mjs \
+            --state-root ../state \
+            --report "../state/records/$STATE_SLUG/items/$PR_NUMBER.md" \
+            --labels ../publication-proof/labels.json \
+            --comments ../publication-proof/comments.json \
+            --repository "$TARGET_REPO" \
+            --repository-id "$REPOSITORY_ID" \
+            --item-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --engine-sha "$ENGINE_SHA" \
+            --workflow-run-url "$WORKFLOW_RUN_URL"
+
       - name: Commit and push the public DinkusKit state record
         shell: bash
         env:
@@ -929,7 +950,7 @@ jobs:
           git -C state config core.hooksPath "$hooks_dir"
           git -C state config user.name "dinkuskit-clawsweeper[bot]"
           git -C state config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C state add -- "records/$STATE_SLUG"
+          git -C state add -- "records/$STATE_SLUG" "results/review-telemetry/dinkuskit.json"
           if git -C state diff --cached --quiet; then
             echo "The exact state record was already current."
             exit 0
