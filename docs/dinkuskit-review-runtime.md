@@ -1,6 +1,6 @@
 # DinkusKit review runtime
 
-The 14 enrolled DinkusKit product and review-infrastructure repositories use its own deterministic CI, agent-owned OpenClaw review, and native ClawSweeper review. The review models run on the maintainer-managed Spark-2 Codex OpenAI subscription. GitHub-hosted jobs only bind and relay events; they do not run a model. CI does not dispatch or sequence the reviewers.
+Enrolled DinkusKit product and review-infrastructure repositories each use their own deterministic CI, agent-owned OpenClaw review, and native ClawSweeper review. The review models run on the maintainer-managed Spark-2 Codex OpenAI subscription. GitHub-hosted jobs only bind and relay events; they do not run a model. CI does not dispatch or sequence the reviewers.
 
 The shared `dinkuskit-native-canary.yml` entry point retains its name for caller compatibility. It accepts an exact repository ID, PR, base, head, and publication choice, and sends one native event to the configured private receiver. The receiver re-reads repository identity, source workflow, maintainer permissions, PR readiness, and current source before invoking the existing subscription runtime. It repeats source checks afterward. A successful relay is not a completed or clean review.
 
