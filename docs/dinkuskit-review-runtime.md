@@ -11,3 +11,5 @@ Native events include opened, reopened, edited, synchronized, and ready-for-revi
 Before merge, the working agent checks CI and both reviewers against the current source and resolves findings. Queue receipts and labels alone do not satisfy that requirement. Repo-specific human approval rules remain in force.
 
 The organization `.github` repository is excluded from review-rail enrollment by maintainer decision.
+
+The relay uploads its exact request as a run-attempt artifact before dispatch. The receiver verifies its GitHub digest and exact payload equality, so a previous run cannot authorize another PR tuple or publication choice.

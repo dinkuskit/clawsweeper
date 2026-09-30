@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Send the native request to the private subscription runtime
+      - name: Prepare the native request
         env:
           GH_TOKEN: ${{ secrets.CLAWSWEEPER_DISPATCH_TOKEN }}
           RELAY_REPOSITORY: ${{ vars.CLAWSWEEPER_RELAY_REPOSITORY }}
@@ -81,6 +81,7 @@ jobs:
           PUBLISH: ${{ inputs.publish }}
           ORIGIN_REPOSITORY: ${{ github.repository }}
           ORIGIN_RUN_ID: ${{ github.run_id }}
+          ORIGIN_RUN_ATTEMPT: ${{ github.run_attempt }}
           COMMENT_ID: ${{ github.event.comment.id }}
         shell: bash
         run: |
@@ -104,10 +105,25 @@ jobs:
               'requested_head': field('REQUESTED_HEAD', r'[0-9a-f]{40}'),
               'origin_repository': field('ORIGIN_REPOSITORY', r'dinkuskit/[A-Za-z0-9_.-]+'),
               'origin_run_id': field('ORIGIN_RUN_ID', r'[1-9][0-9]*'),
+              'origin_run_attempt': field('ORIGIN_RUN_ATTEMPT', r'[1-9][0-9]*'),
               'comment_id': os.environ.get('COMMENT_ID', ''),
               'publish': publish,
           }
           print(json.dumps({'event_type': 'clawsweeper_native_pr', 'client_payload': payload}))
           PYREQUEST
+      - name: Bind the request to this workflow attempt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: clawsweeper-request-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clawsweeper-request.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Send the bound request
+        env:
+          GH_TOKEN: ${{ secrets.CLAWSWEEPER_DISPATCH_TOKEN }}
+          RELAY_REPOSITORY: ${{ vars.CLAWSWEEPER_RELAY_REPOSITORY }}
+        shell: bash
+        run: |
+          set -euo pipefail
           gh api --method POST "repos/$RELAY_REPOSITORY/dispatches" --input "$RUNNER_TEMP/clawsweeper-request.json"
           echo 'Native request delivered. Review completion is recorded by the subscription runtime.'

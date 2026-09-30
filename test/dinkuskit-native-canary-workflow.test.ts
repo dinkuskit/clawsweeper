@@ -23,6 +23,7 @@ const inputs = {
   PUBLISH: "true",
   ORIGIN_REPOSITORY: "dinkuskit/blocks",
   ORIGIN_RUN_ID: "12345",
+  ORIGIN_RUN_ATTEMPT: "1",
   COMMENT_ID: "",
 };
 
@@ -68,6 +69,7 @@ test("malformed relay inputs fail before a dispatch payload exists", () => {
     PUBLISH: "yes",
     ORIGIN_REPOSITORY: "outside/blocks",
     ORIGIN_RUN_ID: "-1",
+    ORIGIN_RUN_ATTEMPT: "0",
   })) {
     const result = spawnSync("python3", ["-I", "-"], {
       input: python,
@@ -77,4 +79,15 @@ test("malformed relay inputs fail before a dispatch payload exists", () => {
     assert.notEqual(result.status, 0, key);
     assert.equal(result.stdout, "", key);
   }
+});
+
+test("relay binds its exact request artifact before dispatch", () => {
+  const [prepare, artifact, dispatch] = workflow.jobs.relay.steps;
+  assert.equal(artifact.uses, "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+  assert.equal(artifact.with.name, "clawsweeper-request-${{ github.run_attempt }}");
+  assert.equal(artifact.with.path, "${{ runner.temp }}/clawsweeper-request.json");
+  assert.equal(artifact.with["if-no-files-found"], "error");
+  assert.match(prepare.run, /origin_run_attempt/);
+  assert.doesNotMatch(prepare.run, /gh api --method POST/);
+  assert.match(dispatch.run, /--input "\$RUNNER_TEMP\/clawsweeper-request.json"/);
 });
