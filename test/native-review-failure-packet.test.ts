@@ -259,13 +259,7 @@ test("redaction and byte caps: oversized report, PEM/JWT/URL redaction, symlink 
   }
 });
 
-test("failure categories stay consistent with the workflow jq allowlist and the adapter's recorded literals", () => {
-  const workflowSource = readFileSync(".github/workflows/dinkuskit-native-canary.yml", "utf8");
-  const inMatch = workflowSource.match(/\.category \| IN\(([\s\S]*?)\)\)/);
-  assert.ok(inMatch, "expected the jq category IN(...) allowlist");
-  const workflowCategories = [...inMatch[1].matchAll(/"([a-z_]+)"/g)].map((match) => match[1]);
-  assert.deepEqual([...workflowCategories].sort(), [...FAILURE_CATEGORIES].sort());
-
+test("historical adapter failure categories stay within the retained diagnostic contract", () => {
   const adapterSource = readFileSync("scripts/run-copilot-codex-adapter.mjs", "utf8");
   const returnCategories = [...adapterSource.matchAll(/return "([a-z_]+)";/g)].map(
     (match) => match[1],

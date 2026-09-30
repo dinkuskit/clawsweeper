@@ -1,0 +1,96 @@
+name: ClawSweeper dispatch
+
+# Native events are independent of CI and agent-owned OpenClaw review.
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Exact open pull request number
+        required: true
+        type: string
+      publish:
+        description: Publish the native review and state
+        required: true
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  bind:
+    if: vars.CLAWSWEEPER_SPARK_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      requested: ${{ steps.live.outputs.requested }}
+      pr_number: ${{ steps.live.outputs.pr_number }}
+      base_sha: ${{ steps.live.outputs.base_sha }}
+      head_sha: ${{ steps.live.outputs.head_sha }}
+      publish: ${{ steps.live.outputs.publish }}
+    steps:
+      - name: Bind the native event to the current PR
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPO: dinkuskit/clawsweeper
+          TARGET_ID: "1308874391"
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+          MANUAL_PUBLISH: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PYBIND'
+          import json, os, re, subprocess
+          from pathlib import Path
+          def get(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          def skip():
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+                  out.write('requested=false\n')
+              raise SystemExit(0)
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          kind = os.environ['GITHUB_EVENT_NAME']
+          if kind == 'issue_comment':
+              comment = event['comment']
+              if not event['issue'].get('pull_request') or comment['user']['type'] == 'Bot': skip()
+              if comment.get('author_association') not in {'OWNER', 'MEMBER', 'COLLABORATOR'}: skip()
+              if not re.search(r'^\s*@clawsweeper (?:re-)?review\s*$', comment.get('body', ''), re.I | re.M): skip()
+          target = os.environ['TARGET_REPO']
+          repo = get('repos/' + target)
+          if str(repo['id']) != os.environ['TARGET_ID']: raise SystemExit('Repository identity changed')
+          number = os.environ['PR_NUMBER']
+          if not re.fullmatch(r'[1-9][0-9]*', number): raise SystemExit('Invalid PR number')
+          pull = get(f'repos/{target}/pulls/{number}')
+          if pull['state'] != 'open' or pull['draft']: skip()
+          if pull['base']['repo']['id'] != repo['id'] or pull['base']['ref'] != repo['default_branch']: skip()
+          base = get(f"repos/{target}/git/ref/heads/{repo['default_branch']}")['object']['sha']
+          head = pull['head']['sha']
+          if any(not re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (base, head)): raise SystemExit('Invalid source tuple')
+          if base != pull['base']['sha']: raise SystemExit('Base moved during admission')
+          publish = 'true' if kind != 'workflow_dispatch' else os.environ['MANUAL_PUBLISH']
+          if publish not in {'true', 'false'}: raise SystemExit('Invalid publication mode')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'requested=true\npr_number={number}\nbase_sha={base}\nhead_sha={head}\npublish={publish}\n')
+          PYBIND
+
+  review:
+    needs: bind
+    if: needs.bind.outputs.requested == 'true'
+    permissions: {}
+    uses: ./.github/workflows/dinkuskit-native-canary.yml
+    with:
+      target_repository: clawsweeper
+      target_repository_id: "1308874391"
+      pr_number: ${{ needs.bind.outputs.pr_number }}
+      expected_base_sha: ${{ needs.bind.outputs.base_sha }}
+      expected_head_sha: ${{ needs.bind.outputs.head_sha }}
+      publish: ${{ needs.bind.outputs.publish == 'true' }}
+    secrets:
+      CLAWSWEEPER_DISPATCH_TOKEN: ${{ secrets.CLAWSWEEPER_DISPATCH_TOKEN }}

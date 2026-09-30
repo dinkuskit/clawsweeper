@@ -1,492 +1,93 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { parse } from "yaml";
 
-type Step = {
-  name?: string;
-  uses?: string;
-  run?: string;
-  env?: Record<string, unknown>;
-  with?: Record<string, unknown>;
+const source = readFileSync(".github/workflows/dinkuskit-native-canary.yml", "utf8");
+const workflow = parse(source);
+const step = workflow.jobs.relay.steps[0];
+const python = step.run
+  .split("<<'PYREQUEST'")[1]
+  .split("\n")
+  .slice(1)
+  .join("\n")
+  .split("\nPYREQUEST")[0];
+const inputs = {
+  RELAY_REPOSITORY: "example/private-review-receiver",
+  TARGET_REPOSITORY: "blocks",
+  TARGET_REPOSITORY_ID: "1306882611",
+  PR_NUMBER: "47",
+  REQUESTED_BASE: "a".repeat(40),
+  REQUESTED_HEAD: "b".repeat(40),
+  PUBLISH: "true",
+  ORIGIN_REPOSITORY: "dinkuskit/blocks",
+  ORIGIN_RUN_ID: "12345",
+  ORIGIN_RUN_ATTEMPT: "1",
+  COMMENT_ID: "",
 };
 
-type Job = {
-  if?: string;
-  needs?: string | string[];
-  env?: Record<string, unknown>;
-  permissions?: Record<string, string>;
-  steps?: Step[];
-};
-
-type Workflow = {
-  on?: Record<string, unknown>;
-  permissions?: Record<string, string>;
-  concurrency?: {
-    group?: string;
-    "cancel-in-progress"?: boolean;
-  };
-  env?: Record<string, string>;
-  jobs?: Record<string, Job>;
-};
-
-const path = ".github/workflows/dinkuskit-native-canary.yml";
-const source = readFileSync(path, "utf8");
-const workflow = parse(source) as Workflow;
-
-function job(name: string): Job {
-  const value = workflow.jobs?.[name];
-  assert.ok(value, `missing ${name} job`);
-  return value;
-}
-
-function jobSource(name: string): string {
-  return JSON.stringify(job(name));
-}
-
-function step(jobName: string, name: string): Step {
-  const value = (job(jobName).steps ?? []).find((candidate) => candidate.name === name);
-  assert.ok(value, `missing ${jobName} step: ${name}`);
-  return value;
-}
-
-test("DinkusKit canary is reusable and binds a caller-supplied exact public repository", () => {
-  assert.deepEqual(Object.keys(workflow.on ?? {}), ["workflow_dispatch", "workflow_call"]);
-  assert.match(source, /workflow_call:[\s\S]*COPILOT_GITHUB_TOKEN:[\s\S]*required: true/);
-  assert.match(source, /workflow_call:[\s\S]*CLAWSWEEPER_APP_PRIVATE_KEY:[\s\S]*required: true/);
-  assert.match(source, /target_repository:[\s\S]*required: true[\s\S]*type: string/);
-  assert.match(source, /target_repository_id:[\s\S]*required: true[\s\S]*type: string/);
+test("native review workflow relays events without a hosted model", () => {
+  assert.deepEqual(Object.keys(workflow.jobs), ["relay"]);
+  assert.equal(workflow.jobs.relay["runs-on"], "ubuntu-24.04");
+  assert.equal(workflow.jobs.relay.if, "vars.CLAWSWEEPER_SPARK_ENABLED == 'true'");
   assert.deepEqual(workflow.permissions, {});
-  assert.equal(workflow.env?.TARGET_REPOSITORY, "${{ inputs.target_repository }}");
-  assert.equal(
-    workflow.env?.TARGET_REPO,
-    "${{ format('dinkuskit/{0}', inputs.target_repository) }}",
-  );
-  assert.equal(workflow.env?.TARGET_REPOSITORY_ID, "${{ inputs.target_repository_id }}");
-  assert.equal(
-    workflow.env?.STATE_SLUG,
-    "${{ format('dinkuskit-{0}', inputs.target_repository) }}",
-  );
-  assert.equal(workflow.env?.STATE_REPO, "dinkuskit/clawsweeper-state");
-  assert.equal(workflow.env?.UPSTREAM_BASE_SHA, "e9423a404ffe6527373b84053e1df4d0d8bbd77b");
-  const admissionSteps = job("admit").steps ?? [];
-  const inputValidationIndex = admissionSteps.findIndex(
-    (candidate) => candidate.name === "Validate immutable caller inputs",
-  );
-  const tokenIndex = admissionSteps.findIndex(
-    (candidate) => candidate.name === "Mint the repository-scoped admission token",
-  );
-  assert.ok(inputValidationIndex >= 0);
-  assert.ok(
-    tokenIndex > inputValidationIndex,
-    "inputs must be allowlisted before App token minting",
-  );
-  const inputValidation = admissionSteps[inputValidationIndex]?.run ?? "";
-  for (const binding of [
-    "blocks:1306882611",
-    "template-store:1306882668",
-    "template-services:1306882701",
-    "template-marketing:1306882756",
-    "inventory:1307843786",
-    "coupons:1307843842",
-    "bundles:1307843885",
-    "commerce:1347692514",
-  ]) {
-    assert.match(inputValidation, new RegExp(binding));
-  }
-  assert.match(inputValidation, /not in the DinkusKit canary allowlist/);
-  assert.match(source, /target_repository_id must be a positive numeric GitHub repository ID/);
-  assert.match(source, /base_ref" != "\$default_branch"/);
-  assert.match(source, /visibility" != "public"/);
-  assert.doesNotMatch(source, /dinkuskit\/blocks|PR_NUMBER" != "7"/);
-  assert.match(source, /expected_base_sha must be a lowercase 40-character SHA/);
-  assert.match(source, /expected_head_sha must be a lowercase 40-character SHA/);
-});
-
-test("shared state-branch publishers remain globally serialized", () => {
-  assert.equal(workflow.env?.STATE_REPO, "dinkuskit/clawsweeper-state");
-  assert.equal(workflow.env?.STATE_BRANCH, "state");
-  assert.equal(workflow.concurrency?.group, "dinkuskit-native-clawsweeper-state-writer");
-  assert.equal(workflow.concurrency?.["cancel-in-progress"], false);
-  assert.doesNotMatch(workflow.concurrency?.group ?? "", /target_repository/);
-});
-
-test("review and publisher keep Copilot and write credentials in separate steps and jobs", () => {
-  const review = jobSource("review");
-  const publish = jobSource("publish");
-  const runReview = JSON.stringify(step("review", "Run the native ClawSweeper review"));
-  assert.deepEqual(job("review").permissions, { contents: "read" });
-  assert.match(review, /@github\/copilot@1\.0\.73/);
-  assert.match(review, /detect-libc@2\.1\.2/);
-  assert.match(review, /COPILOT_GITHUB_TOKEN/);
-  assert.match(review, /gpt-5\.6-terra/);
-  assert.match(review, /CLAWSWEEPER_COPILOT_EFFORT=high/);
-  assert.doesNotMatch(review, /OPENAI_API_KEY|setup-codex|CLAWSWEEPER_INTERNAL_MODEL/);
-  assert.match(review, /create-github-app-token/);
-  assert.doesNotMatch(runReview, /CLAWSWEEPER_APP_PRIVATE_KEY/);
-  assert.doesNotMatch(runReview, /CLAWSWEEPER_PROOF_INSPECTION_TOKEN/);
-  assert.match(runReview, /COPILOT_GITHUB_TOKEN/);
-  assert.match(runReview, /steps\.review-token\.outputs\.token/);
-  assert.match(publish, /CLAWSWEEPER_APP_PRIVATE_KEY/);
-  assert.match(publish, /create-github-app-token/);
+  assert.deepEqual(Object.keys(workflow.on.workflow_call.secrets), ["CLAWSWEEPER_DISPATCH_TOKEN"]);
   assert.doesNotMatch(
-    publish,
-    /OPENAI_API_KEY|COPILOT_GITHUB_TOKEN|CLAWSWEEPER_COPILOT|setup-codex/,
+    source,
+    /COPILOT|OPENAI_API_KEY|actions\/checkout|setup-codex|self-hosted|npm install|pnpm install/,
   );
-  assert.equal(job("publish").if, "${{ inputs.publish }}");
+  assert.equal(spawnSync("bash", ["-n"], { input: step.run }).status, 0);
 });
 
-test("canary invokes native review and comment-only apply without workflow-authored target builds", () => {
-  const review = jobSource("review");
-  const publish = jobSource("publish");
-  assert.match(review, /dist\/clawsweeper\.js review/);
-  assert.match(review, /--local-only/);
-  assert.match(review, /--readonly-openclaw/);
-  assert.match(review, /--codex-sandbox read-only/);
-  assert.match(review, /--codex-model gpt-5\.6-terra/);
-  assert.match(review, /--codex-reasoning-effort high/);
-  assert.match(review, /--codex-service-tier default/);
-  assert.doesNotMatch(review, /--codex-service-tier fast/);
-  assert.match(review, /--codex-timeout-ms 1200000/);
-  assert.match(review, /--disable-media-proof-preprocessing/);
-  assert.match(review, /validate-dinkuskit-canary-report/);
-  assert.match(review, /repair:exact-review-bundle create/);
-  const targetSteps = (job("review").steps ?? []).filter((step) =>
-    /target checkout|native ClawSweeper review/i.test(step.name ?? ""),
-  );
-  assert.equal(targetSteps.length, 2);
-  for (const step of targetSteps) {
-    assert.doesNotMatch(step.run ?? "", /(?:npm|pnpm|yarn|bun)\s+(?:install|run|test|build)/i);
-  }
-
-  assert.match(publish, /repair:exact-review-bundle validate/);
-  assert.match(publish, /pnpm run apply-artifacts/);
-  assert.match(publish, /pnpm run apply-decisions/);
-  assert.match(publish, /validate-dinkuskit-canary-publication/);
-  assert.match(publish, /apply-report\.json/);
-  assert.match(publish, /--sync-comments-only/);
-  assert.match(publish, /--suppress-automation-markers/);
-  assert.match(publish, /--limit 0/);
-  assert.doesNotMatch(
-    publish,
-    /(?:gh pr merge|gh pr close|repair:dispatch|repair:worker|automerge)/i,
-  );
-});
-
-test("publisher consumes the exact review artifact and producer attempt across failed-job reruns", () => {
-  const review = jobSource("review");
-  const publish = jobSource("publish");
-  assert.match(review, /review-artifact/);
-  assert.match(review, /artifact-id/);
-  assert.match(review, /producer_attempt/);
-  assert.match(publish, /artifact-ids/);
-  assert.match(publish, /needs\.review\.outputs\.artifact_id/);
-  assert.match(publish, /needs\.review\.outputs\.producer_attempt/);
-  assert.doesNotMatch(
-    JSON.stringify(step("publish", "Download the native review bundle")),
-    /github\.run_attempt/,
-  );
-});
-
-test("all external actions in the canary use immutable commit pins", () => {
-  const steps = Object.values(workflow.jobs ?? {}).flatMap((candidate) => candidate.steps ?? []);
-  const external = steps
-    .map((step) => step.uses)
-    .filter((uses): uses is string => Boolean(uses && !uses.startsWith("./")));
-  assert.ok(external.length > 0);
-  for (const uses of external) {
-    assert.match(uses, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/, uses);
+test("relay emits a bounded source-bound request, including proposal-only mode", () => {
+  for (const publish of ["true", "false"]) {
+    const result = spawnSync("python3", ["-I", "-"], {
+      input: python,
+      encoding: "utf8",
+      env: { ...process.env, ...inputs, PUBLISH: publish },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.event_type, "clawsweeper_native_pr");
+    assert.equal(body.client_payload.target_repo, "dinkuskit/blocks");
+    assert.equal(body.client_payload.requested_head, inputs.REQUESTED_HEAD);
+    assert.equal(body.client_payload.publish, publish === "true");
+    assert.equal(body.client_payload.origin_run_id, "12345");
+    assert.equal(body.client_payload.origin_repository, "dinkuskit/blocks");
   }
 });
 
-test("all GitHub App token mints use the Client ID and validate public App identity", () => {
-  const deprecatedInput = ["app", "id"].join("-");
-  const legacyVariable = ["CLAWSWEEPER", "APP", "ID"].join("_");
-  const tokenSteps = Object.values(workflow.jobs ?? {})
-    .flatMap((candidate) => candidate.steps ?? [])
-    .filter((candidate) => candidate.uses?.startsWith("actions/create-github-app-token@"));
-  assert.equal(tokenSteps.length, 5);
-  for (const tokenStep of tokenSteps) {
-    assert.equal(tokenStep.with?.["client-id"], "${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}");
-    assert.ok(!(deprecatedInput in (tokenStep.with ?? {})), tokenStep.name);
-  }
-  assert.doesNotMatch(source, new RegExp(deprecatedInput));
-  assert.doesNotMatch(source, new RegExp(legacyVariable));
-
-  const validation = step("publish", "Validate publisher configuration");
-  assert.deepEqual(validation.env, {
-    APP_CLIENT_ID: "${{ vars.CLAWSWEEPER_APP_CLIENT_ID }}",
-    APP_BOT_LOGIN: "${{ vars.CLAWSWEEPER_APP_BOT_LOGIN }}",
-  });
-  assert.match(validation.run ?? "", /\[\[ "\$APP_CLIENT_ID" =~ \^Iv\[A-Za-z0-9\]\{18\}\$ \]\]/);
-  assert.match(
-    validation.run ?? "",
-    /\[\[ "\$APP_BOT_LOGIN" =~ \^\[A-Za-z0-9-\]\+\\\[bot\\\]\$ \]\]/,
-  );
-});
-
-test("publisher requests only target comment/label and isolated state capabilities", () => {
-  const publish = jobSource("publish");
-  assert.match(publish, /permission-contents":"read/);
-  assert.match(publish, /permission-checks":"read/);
-  assert.match(publish, /permission-issues":"write/);
-  assert.match(publish, /permission-pull-requests":"write/);
-  assert.match(publish, /permission-statuses":"read/);
-  assert.match(publish, /repositories":"\$\{\{ inputs\.target_repository \}\}"/);
-  assert.match(publish, /repositories":"clawsweeper-state/);
-  assert.match(publish, /permission-contents":"write/);
-  assert.doesNotMatch(publish, /permission-(?:actions|checks|deployments|workflows)":"write/);
-});
-
-test("cross-repository reads use narrow App tokens instead of the control GITHUB_TOKEN", () => {
-  const admission = JSON.stringify(step("admit", "Mint the repository-scoped admission token"));
-  const reviewToken = JSON.stringify(step("review", "Mint the repository-scoped review token"));
-  const preflight = JSON.stringify(
-    step("publish", "Mint the repository-scoped publication preflight token"),
-  );
-  assert.match(admission, /permission-contents":"read/);
-  assert.match(admission, /permission-pull-requests":"read/);
-  assert.match(reviewToken, /permission-checks":"read/);
-  assert.match(reviewToken, /permission-contents":"read/);
-  assert.match(reviewToken, /permission-issues":"read/);
-  assert.match(reviewToken, /permission-pull-requests":"read/);
-  assert.match(reviewToken, /permission-statuses":"read/);
-  assert.match(preflight, /permission-contents":"read/);
-  assert.match(preflight, /permission-issues":"read/);
-  assert.match(preflight, /permission-pull-requests":"read/);
-  for (const tokenStep of [admission, reviewToken, preflight]) {
-    assert.match(tokenStep, /repositories":"\$\{\{ inputs\.target_repository \}\}"/);
-    assert.doesNotMatch(tokenStep, /repositories":"blocks/);
-  }
-  assert.doesNotMatch(source, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
-});
-
-test("Copilot runs through a token-minimal unprivileged wrapper", () => {
-  const install = JSON.stringify(
-    step("review", "Install the pinned GitHub Copilot CLI without shared caches"),
-  );
-  const prepare = JSON.stringify(step("review", "Prepare the unprivileged Copilot runtime"));
-  const revoke = JSON.stringify(step("review", "Revoke model runtime write access"));
-  const failureClass = JSON.stringify(step("review", "Report the bounded Copilot failure class"));
-  const wrapper = readFileSync("scripts/run-codex-unprivileged.sh", "utf8");
-  assert.match(install, /GitHub Copilot CLI 1\.0\.73\./);
-  assert.doesNotMatch(install, /--version\)" = "1\.0\.73"/);
-  assert.match(prepare, /adduser --system/);
-  assert.match(prepare, /clawsweeper-share/);
-  assert.doesNotMatch(prepare, /groups "\$runner_group"/);
-  assert.doesNotMatch(prepare, /groups "\$USER"/);
-  assert.match(prepare, /unexpectedly retained sudo authority/);
-  assert.match(prepare, /root:root/);
-  assert.match(prepare, /chmod -R a-w/);
-  assert.match(prepare, /safe\.directory.*\$CANARY_TARGET/);
-  assert.doesNotMatch(prepare, /safe\.directory[^\n]*\*/);
-  assert.match(revoke, /\$\{CLAWSWEEPER_MODEL_USER:-\}/);
-  assert.match(revoke, /id \\"\$CLAWSWEEPER_MODEL_USER\\"/);
-  assert.match(revoke, /pkill --signal KILL --uid/);
-  assert.match(revoke, /chmod -R go-w/);
-  assert.match(failureClass, /copilot-failure\.json/);
-  assert.match(failureClass, /clawsweeper_copilot_failure/);
-  assert.match(failureClass, /authentication/);
-  assert.match(failureClass, /model_access/);
-  assert.match(failureClass, /cli_contract/);
-  assert.match(failureClass, /response_contract/);
-  assert.doesNotMatch(failureClass, /codex\.stderr|COPILOT_GITHUB_TOKEN|\bcat\b/);
-  assert.match(wrapper, /sudo --non-interactive --set-home --user=/);
-  assert.match(wrapper, /\/usr\/bin\/env -i/);
-  assert.match(wrapper, /CLAWSWEEPER_PROOF_SCRATCH_DIR/);
-  assert.match(wrapper, /COPILOT_GITHUB_TOKEN="\$COPILOT_GITHUB_TOKEN"/);
-  assert.match(wrapper, /CLAWSWEEPER_COPILOT_MODEL/);
-  assert.match(wrapper, /CLAWSWEEPER_COPILOT_EFFORT/);
-  assert.match(wrapper, /CLAWSWEEPER_COPILOT_DECISION_MCP="\$CLAWSWEEPER_COPILOT_DECISION_MCP"/);
-  assert.match(wrapper, /GIT_CONFIG_GLOBAL="\$CLAWSWEEPER_MODEL_GIT_CONFIG"/);
-  assert.doesNotMatch(wrapper, /\bGH_TOKEN\b|\bGITHUB_TOKEN\b|OPENAI_API_KEY|APP_PRIVATE_KEY/);
-  assert.match(source, /CANARY_ROOT:\s*\/opt\/dinkuskit-clawsweeper-canary/);
-  assert.doesNotMatch(source, /\$RUNNER_TEMP\/(?:review-artifacts|clawsweeper-model)/);
-});
-
-test("publication state is isolated under the verified dynamic repository slug", () => {
-  const publish = jobSource("publish");
-  assert.match(publish, /state_root=\\"\.\.\/state\/records\/\$STATE_SLUG\\"/);
-  assert.match(
-    publish,
-    /git -C state add -- \\"records\/\$STATE_SLUG\\" \\"results\/review-telemetry\/dinkuskit\.json\\"/,
-  );
-  assert.match(publish, /review: publish \$TARGET_REPO#\$PR_NUMBER/);
-  assert.doesNotMatch(publish, /records\/dinkuskit-blocks/);
-  assert.doesNotMatch(publish, /git -C state add -- \.(?:\\|"|\s|$)/);
-});
-
-test("failed reviews report only bounded adapter or native failure classes", () => {
-  const failureClass = JSON.stringify(step("review", "Report the bounded Copilot failure class"));
-  assert.match(failureClass, /copilot-adapter-status\.json/);
-  assert.match(failureClass, /native_postprocess/);
-  assert.match(failureClass, /adapter_handoff/);
-  assert.match(failureClass, /adapter_boundary/);
-  assert.match(failureClass, /rate_limited/);
-  assert.match(failureClass, /server_error/);
-  assert.doesNotMatch(failureClass, /cat\s|copilot\.stderr|codex\.stderr/);
-});
-
-test("native review failures assemble and upload a bounded sanitized failure packet", () => {
-  const reviewSteps = job("review").steps ?? [];
-  const revokeIndex = reviewSteps.findIndex(
-    (candidate) => candidate.name === "Revoke model runtime write access",
-  );
-  const failureClassIndex = reviewSteps.findIndex(
-    (candidate) => candidate.name === "Report the bounded Copilot failure class",
-  );
-  const assembleIndex = reviewSteps.findIndex(
-    (candidate) => candidate.name === "Assemble the sanitized native review failure packet",
-  );
-  const uploadIndex = reviewSteps.findIndex(
-    (candidate) => candidate.name === "Upload the sanitized native review failure packet",
-  );
-  assert.ok(revokeIndex >= 0);
-  assert.ok(revokeIndex < failureClassIndex);
-  assert.ok(failureClassIndex < assembleIndex);
-  assert.ok(assembleIndex < uploadIndex);
-
-  const assembleStep = step("review", "Assemble the sanitized native review failure packet");
-  const uploadStep = step("review", "Upload the sanitized native review failure packet");
-  assert.equal(assembleStep.if, "${{ failure() }}");
-  assert.equal(uploadStep.if, "${{ failure() }}");
-
-  const assembleSource = JSON.stringify(assembleStep);
-  assert.match(assembleStep.run ?? "", /collect-native-review-failure-packet\.mjs/);
-  assert.doesNotMatch(
-    assembleSource,
-    /GH_TOKEN|COPILOT_GITHUB_TOKEN|APP_PRIVATE_KEY|secrets\.|create-github-app-token|gh api/,
-  );
-
-  assert.equal(
-    uploadStep.uses,
-    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", // v7
-  );
-  assert.match(
-    String(uploadStep.with?.name ?? ""),
-    /dinkuskit-native-review-failure-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/,
-  );
-  assert.equal(uploadStep.with?.["retention-days"], 30);
-  assert.equal(uploadStep.with?.["if-no-files-found"], "warn");
-
-  const runReview = step("review", "Run the native ClawSweeper review");
-  assert.match(runReview.run ?? "", /CLAWSWEEPER_REVIEW_STARTED_AT/);
-  assert.match(runReview.run ?? "", /CLAWSWEEPER_REVIEW_EXIT_STATUS/);
-  assert.match(runReview.run ?? "", /exit "\$review_status"/);
-});
-
-test("dashboard telemetry is written in the same serialized publish commit after publication validation", () => {
-  const publishJob = job("publish");
-  const publishSteps = publishJob.steps ?? [];
-  const verifyIndex = publishSteps.findIndex(
-    (candidate) => candidate.name === "Verify the native publication and unchanged head",
-  );
-  const telemetryIndex = publishSteps.findIndex(
-    (candidate) => candidate.name === "Publish DinkusKit review telemetry into the same state tree",
-  );
-  const commitIndex = publishSteps.findIndex(
-    (candidate) => candidate.name === "Commit and push the public DinkusKit state record",
-  );
-  assert.ok(verifyIndex >= 0);
-  assert.ok(verifyIndex < telemetryIndex);
-  assert.ok(telemetryIndex < commitIndex);
-  assert.deepEqual(publishJob.needs, ["admit", "review"]);
-  assert.equal(publishJob.if, "${{ inputs.publish }}");
-  assert.doesNotMatch(publishJob.if ?? "", /always\(\)/);
-  assert.doesNotMatch(publishJob.if ?? "", /failure\(\)/);
-  assert.deepEqual(Object.keys(workflow.jobs ?? {}), ["admit", "review", "publish"]);
-
-  const telemetry = step("publish", "Publish DinkusKit review telemetry into the same state tree");
-  const telemetrySource = JSON.stringify(telemetry);
-  assert.match(telemetry.run ?? "", /publish-dinkuskit-review-telemetry\.mjs/);
-  assert.match(telemetry.run ?? "", /--state-root \.\.\/state/);
-  assert.equal(telemetry.env?.ENGINE_SHA, "${{ inputs.engine_sha }}");
-  assert.match(String(telemetry.env?.WORKFLOW_RUN_URL ?? ""), /github\.run_id/);
-  assert.doesNotMatch(
-    telemetrySource,
-    /GH_TOKEN|COPILOT_GITHUB_TOKEN|APP_PRIVATE_KEY|secrets\.|create-github-app-token|gh api|OPENAI_API_KEY/,
-  );
-
-  const commit = step("publish", "Commit and push the public DinkusKit state record");
-  assert.match(
-    commit.run ?? "",
-    /git -C state add -- "records\/\$STATE_SLUG" "results\/review-telemetry\/dinkuskit\.json"/,
-  );
-  assert.equal((commit.run ?? "").match(/git -C state push/g)?.length, 1);
-  assert.doesNotMatch(commit.run ?? "", /git -C state add -- \.(?:$|\s)/);
-});
-
-test("producer failure never publishes comments, labels, or state", () => {
-  const publishJob = job("publish");
-  assert.deepEqual(publishJob.needs, ["admit", "review"]);
-  assert.equal(publishJob.if, "${{ inputs.publish }}");
-  assert.doesNotMatch(publishJob.if ?? "", /always\(\)/);
-  assert.doesNotMatch(publishJob.if ?? "", /failure\(\)/);
-
-  const publishStepNames = (publishJob.steps ?? []).map((candidate) => candidate.name ?? "");
-  for (const forbidden of [
-    "Report the bounded Copilot failure class",
-    "Assemble the sanitized native review failure packet",
-    "Upload the sanitized native review failure packet",
-  ]) {
-    assert.ok(!publishStepNames.includes(forbidden), forbidden);
+test("malformed relay inputs fail before a dispatch payload exists", () => {
+  for (const [key, value] of Object.entries({
+    RELAY_REPOSITORY: "",
+    TARGET_REPOSITORY: "../blocks",
+    TARGET_REPOSITORY_ID: "false",
+    PR_NUMBER: "1; echo bad",
+    REQUESTED_HEAD: "main",
+    REQUESTED_BASE: "short",
+    PUBLISH: "yes",
+    ORIGIN_REPOSITORY: "outside/blocks",
+    ORIGIN_RUN_ID: "-1",
+    ORIGIN_RUN_ATTEMPT: "0",
+  })) {
+    const result = spawnSync("python3", ["-I", "-"], {
+      input: python,
+      encoding: "utf8",
+      env: { ...process.env, ...inputs, [key]: value },
+    });
+    assert.notEqual(result.status, 0, key);
+    assert.equal(result.stdout, "", key);
   }
 });
 
-test("target checkout completes before Copilot installation and ignores ambient Git config", () => {
-  const steps = job("review").steps ?? [];
-  const checkoutIndex = steps.findIndex(
-    (candidate) => candidate.name === "Prepare the exact target checkout as read-only data",
-  );
-  const copilotIndex = steps.findIndex(
-    (candidate) => candidate.name === "Install the pinned GitHub Copilot CLI without shared caches",
-  );
-  assert.ok(checkoutIndex >= 0);
-  assert.ok(copilotIndex > checkoutIndex);
-
-  const hardenedKeys = [
-    "GIT_CONFIG_NOSYSTEM",
-    "GIT_CONFIG_GLOBAL",
-    "GIT_ATTR_NOSYSTEM",
-    "GIT_TERMINAL_PROMPT",
-  ];
-  for (const key of hardenedKeys) assert.ok(!(key in (job("review").env ?? {})));
-  for (const stepName of [
-    "Prepare the exact target checkout as read-only data",
-    "Run the native ClawSweeper review",
-    "Validate the exact native report and live tuple",
-  ]) {
-    const hardenedStep = step("review", stepName);
-    for (const key of hardenedKeys)
-      assert.ok(key in (hardenedStep.env ?? {}), `${stepName}: ${key}`);
-  }
-
-  const wrapper = readFileSync("scripts/run-codex-unprivileged.sh", "utf8");
-  assert.match(wrapper, /GIT_CONFIG_NOSYSTEM=1/);
-  assert.match(wrapper, /GIT_CONFIG_GLOBAL="\$CLAWSWEEPER_MODEL_GIT_CONFIG"/);
-  assert.match(wrapper, /GIT_ATTR_NOSYSTEM=1/);
-  assert.match(wrapper, /GIT_TERMINAL_PROMPT=0/);
-});
-
-test("reusable jobs check out and bind the explicit immutable engine commit", () => {
-  for (const stepName of [
-    "Check out the trusted ClawSweeper engine",
-    "Check out the trusted ClawSweeper publisher",
-  ]) {
-    const jobName = stepName.includes("engine") ? "review" : "publish";
-    const checkout = step(jobName, stepName);
-    assert.equal(checkout.with?.repository, "dinkuskit/clawsweeper");
-    assert.equal(checkout.with?.ref, "${{ inputs.engine_sha }}");
-  }
-  assert.match(source, /engine_sha:[\s\S]*required: true/);
-  assert.match(source, /ENGINE_SHA: \$\{\{ inputs\.engine_sha \}\}/);
-  assert.match(source, /\[\[ "\$ENGINE_SHA" =~ \^\[0-9a-f\]\{40\}\$ \]\]/);
-  assert.match(source, /EXACT_REVIEW_SOURCE_SHA="\$ENGINE_SHA"/);
-  assert.doesNotMatch(source, /GITHUB_(?:WORKFLOW_)?SHA|github\.sha|job\.workflow_/);
-});
-
-test("public canary disables trusted-host media preprocessing in the native engine", () => {
-  const engine = readFileSync("src/clawsweeper.ts", "utf8");
-  assert.match(engine, /boolArg\(args\.disable_media_proof_preprocessing\)/);
-  assert.match(engine, /localRangeData \|\| disableMediaProofPreprocessing/);
+test("relay binds its exact request artifact before dispatch", () => {
+  const [prepare, artifact, dispatch] = workflow.jobs.relay.steps;
+  assert.equal(artifact.uses, "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+  assert.equal(artifact.with.name, "clawsweeper-request-${{ github.run_attempt }}");
+  assert.equal(artifact.with.path, "${{ runner.temp }}/clawsweeper-request.json");
+  assert.equal(artifact.with["if-no-files-found"], "error");
+  assert.match(prepare.run, /origin_run_attempt/);
+  assert.doesNotMatch(prepare.run, /gh api --method POST/);
+  assert.match(dispatch.run, /--input "\$RUNNER_TEMP\/clawsweeper-request.json"/);
 });
