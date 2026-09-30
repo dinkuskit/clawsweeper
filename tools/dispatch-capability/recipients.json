@@ -1,0 +1,27 @@
+[
+  {
+    "repository": "dinkuskit/commerce",
+    "key_id": "3380204578043523366",
+    "key": "bnW7kuGWlqMKygZXpHcxjmxOAnoqfYQml5zQHfZqym0="
+  },
+  {
+    "repository": "dinkuskit/template-store",
+    "key_id": "3380204578043523366",
+    "key": "SQdmNarohZtaZ4j1PUAJalVCpmTC8TAhYR88mHfaWCY="
+  },
+  {
+    "repository": "dinkuskit/inventory",
+    "key_id": "3380204578043523366",
+    "key": "Ohx7HDYWUyd1B6eb96gX35BilpQ/yUnEtOP/Zp6M5gk="
+  },
+  {
+    "repository": "dinkuskit/payments",
+    "key_id": "3380204578043523366",
+    "key": "pci4/kKSNMflTehkwEIuX7GTRhQrxNH4R8SEcHIpXx4="
+  },
+  {
+    "repository": "dinkuskit/dinkuskit",
+    "key_id": "3380204578043523366",
+    "key": "DfuE+devkZIKVZVK6UvxKp+JGRoGCG15wJHYWG++TTE="
+  }
+]

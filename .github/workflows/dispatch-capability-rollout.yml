@@ -1,0 +1,33 @@
+name: Seal priority review dispatch capability
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  seal:
+    if: github.repository == 'dinkuskit/clawsweeper' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: "24"
+      - name: Install pinned encryption dependency and test with fixtures
+        run: |
+          npm ci --ignore-scripts --prefix tools/dispatch-capability
+          npm test --prefix tools/dispatch-capability
+      - name: Seal existing capability to fixed GitHub repository keys
+        env:
+          CLAWSWEEPER_DISPATCH_TOKEN: ${{ secrets.CLAWSWEEPER_DISPATCH_TOKEN }}
+        run: node tools/dispatch-capability/seal.mjs "$RUNNER_TEMP/dispatch-sealed.json"
+      - name: Retain only GitHub-encrypted payloads for installation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dispatch-sealed
+          path: ${{ runner.temp }}/dispatch-sealed.json
+          retention-days: 1
+          if-no-files-found: error

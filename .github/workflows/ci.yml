@@ -39,6 +39,7 @@ jobs:
             scripts
             src
             test
+            tools/dispatch-capability
             .oxfmtrc.json
             AGENTS.md
             README.md
@@ -67,6 +68,11 @@ jobs:
             .github/workflows/*.yml
 
       - uses: ./.github/actions/setup-pnpm
+
+      - name: Test fixed dispatch capability sealing
+        run: |
+          npm ci --ignore-scripts --prefix tools/dispatch-capability
+          npm test --prefix tools/dispatch-capability
 
       - name: Run check
         run: pnpm run check

@@ -1,0 +1,1 @@
+{"name":"dinkuskit-dispatch-capability-rollout","private":true,"type":"module","scripts":{"test":"node --test seal.test.mjs"},"dependencies":{"libsodium-wrappers":"0.7.15"}}
