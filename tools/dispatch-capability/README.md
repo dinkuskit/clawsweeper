@@ -1,21 +1,21 @@
 # Priority review dispatch capability
 
 This operator-run workflow distributes the existing central dispatch credential
-to Commerce, Template Store, Inventory, Payments, DinkusKit, Coupons and Bundles. It accepts no
-caller-provided recipient or key. The checked-in registry contains only GitHub
+to Commerce, Template Store, Inventory, Payments, DinkusKit, Coupons, Bundles and
+Ship. It accepts no caller-provided recipient or key. The checked-in registry contains only GitHub
 Actions public encryption keys, verified through each repository's API.
 
 Only the sealing step receives the central secret. It emits libsodium sealed
-boxes bound to those seven GitHub keys; no plaintext is logged, returned or
+boxes bound to those eight GitHub keys; no plaintext is logged, returned or
 retained. An authorized operator downloads the encrypted artifact, checks each
 current key ID against the registry, and submits each unchanged encrypted value
 to that repository's Actions secret API. Only GitHub holds the private keys.
 
-The central repository is the canonical credential owner. These seven copies are
+The central repository is the canonical credential owner. These eight copies are
 one rotation bundle for `CLAWSWEEPER_DISPATCH_TOKEN`; provisioning does not expand
 the credential's downstream permissions. A changed public key requires a new
 reviewed registry and sealing run. Rotation must update the canonical secret and
-all seven copies together. The workflow is manual, runs only from main, and checks
+all eight copies together. The workflow is manual, runs only from main, and checks
 out the immutable workflow commit without persisted Git credentials. PR events never run it.
 
 Tests use generated fixture keys and a synthetic noncredential value. Follow-up
