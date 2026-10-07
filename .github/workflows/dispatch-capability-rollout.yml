@@ -1,4 +1,4 @@
-name: Seal priority review dispatch capability
+name: Seal fixed review dispatch capability
 on:
   workflow_dispatch:
 permissions:
