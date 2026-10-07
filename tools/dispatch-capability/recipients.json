@@ -1,13 +1,23 @@
 [
   {
+    "repository": "dinkuskit/bundles",
+    "key_id": "3380204578043523366",
+    "key": "UnyM7Sq2Kx6+dlx17JHuXEy2DZwiCvzoVLD5OdK0xhY="
+  },
+  {
     "repository": "dinkuskit/commerce",
     "key_id": "3380204578043523366",
     "key": "bnW7kuGWlqMKygZXpHcxjmxOAnoqfYQml5zQHfZqym0="
   },
   {
-    "repository": "dinkuskit/template-store",
+    "repository": "dinkuskit/coupons",
     "key_id": "3380204578043523366",
-    "key": "SQdmNarohZtaZ4j1PUAJalVCpmTC8TAhYR88mHfaWCY="
+    "key": "1wBTeDA7xDtKz4H2QiW2rzhzTRiiDpNzGCZC9oQTL3U="
+  },
+  {
+    "repository": "dinkuskit/dinkuskit",
+    "key_id": "3380204578043523366",
+    "key": "DfuE+devkZIKVZVK6UvxKp+JGRoGCG15wJHYWG++TTE="
   },
   {
     "repository": "dinkuskit/inventory",
@@ -20,23 +30,268 @@
     "key": "pci4/kKSNMflTehkwEIuX7GTRhQrxNH4R8SEcHIpXx4="
   },
   {
-    "repository": "dinkuskit/dinkuskit",
-    "key_id": "3380204578043523366",
-    "key": "DfuE+devkZIKVZVK6UvxKp+JGRoGCG15wJHYWG++TTE="
-  },
-  {
-    "repository": "dinkuskit/coupons",
-    "key_id": "3380204578043523366",
-    "key": "1wBTeDA7xDtKz4H2QiW2rzhzTRiiDpNzGCZC9oQTL3U="
-  },
-  {
-    "repository": "dinkuskit/bundles",
-    "key_id": "3380204578043523366",
-    "key": "UnyM7Sq2Kx6+dlx17JHuXEy2DZwiCvzoVLD5OdK0xhY="
-  },
-  {
     "repository": "dinkuskit/ship",
     "key_id": "3380204578043523366",
     "key": "T++EKQm2Pw36ONBMlhimSUXCXI9FtmL8CylOjX3wbjw="
+  },
+  {
+    "repository": "dinkuskit/template-store",
+    "key_id": "3380204578043523366",
+    "key": "SQdmNarohZtaZ4j1PUAJalVCpmTC8TAhYR88mHfaWCY="
+  },
+  {
+    "recipient_id": "r-05569324579c4ad38da2fd86617729cd",
+    "key_id": "3380204578043523366",
+    "key": "JBJMXlB1zTkM9Ix6PELw8hMZ/6CAfN/IpaaS3VZI2Vw="
+  },
+  {
+    "recipient_id": "r-0913ceaae5ef4d759ad9435bebee9f92",
+    "key_id": "3380204578043523366",
+    "key": "BxZ4kGMLmzlNtBxLuz0aFlAZS4ohQ+XEQ7vUShRS9xo="
+  },
+  {
+    "recipient_id": "r-0a5562a7e3e34c18a76ac67bb2426727",
+    "key_id": "3380204578043523366",
+    "key": "c37pp4EoBQHAJu+SBcRvKfiljh4ef0hoEnKZwVesFj0="
+  },
+  {
+    "recipient_id": "r-0d65308bddbf4788823f9e49816c106e",
+    "key_id": "3380204578043523366",
+    "key": "4xnPdt5NQ3EWGnIY804QMZ+Th1lJiPwwaetMhyt0RwU="
+  },
+  {
+    "recipient_id": "r-1baded659c534e6a921382d4b9154241",
+    "key_id": "3380204578043523366",
+    "key": "e3WiACZDOuSK6UeBXO9CPU2xkz0UIm1zqsZT3/bvfDI="
+  },
+  {
+    "recipient_id": "r-1e660ab34383408d99be86709588c39b",
+    "key_id": "3380204578043523366",
+    "key": "Jl2JnvU0rk29CuARWNzCu6RNNtWjl7DLGW/NEQ/l3hQ="
+  },
+  {
+    "recipient_id": "r-1e9c06cb1de949e6998a53fa217a24e8",
+    "key_id": "3380204578043523366",
+    "key": "9DwHqoT1KeSQSYC2Qbm9Er1mVIA6t+LtgUNSvTlSDzQ="
+  },
+  {
+    "recipient_id": "r-208e4c2b2ce240ec9976bc46abd08b4e",
+    "key_id": "3380204578043523366",
+    "key": "JuunUzjR40LYU7axOSA9lMalqVJ+TPwRjJ8ktsLV0HE="
+  },
+  {
+    "recipient_id": "r-26caf00cd71a473fba61ad2c6c464dc7",
+    "key_id": "3380204578043523366",
+    "key": "+B0YIaZ6egF0C5p6h4UGxMtjOP1N/fKJjcC5OxRLV1Y="
+  },
+  {
+    "recipient_id": "r-32dcb0c00ce04974977742f896b44d90",
+    "key_id": "3380204578043523366",
+    "key": "AH+dPHzjVqSaSK51LONu+bg7uNBvifSmGkb+egwXbgI="
+  },
+  {
+    "recipient_id": "r-360a3c8b81db48e18dc672863f494ab3",
+    "key_id": "3380204578043523366",
+    "key": "JuSZhOaeFqkheGLbhQqskjNXGzQ0niH3DO/PyzUmRhQ="
+  },
+  {
+    "recipient_id": "r-3acc1904438647dba6c0ce74f7fd7669",
+    "key_id": "3380204578043523366",
+    "key": "7vGYNlbashQE70NyN6E1RfnRIP8B6xaY4frZEy+cTHo="
+  },
+  {
+    "recipient_id": "r-3c47c40e6e1f47f8ae0e7618cfea881d",
+    "key_id": "3380204578043523366",
+    "key": "P/H5cABzIB/UlnFLMqKpl8vkH2Rw6MRGgg4i1t9r60I="
+  },
+  {
+    "recipient_id": "r-3f05124d42c2492892168576f3f7654c",
+    "key_id": "3380204578043523366",
+    "key": "iKArd1bfmD6vlzhMaISlIuAG+gjrRjzEjYNYKwO/Nzg="
+  },
+  {
+    "recipient_id": "r-3fb317a3f59f471285e2c0ac737a7700",
+    "key_id": "3380204578043523366",
+    "key": "9Yli7fZ8y0TkZ/K5TgFkq1MgnCKtUp7UqpYMHwQJYR0="
+  },
+  {
+    "recipient_id": "r-4211a8faefb94b1e95f6bdfd339303bf",
+    "key_id": "3380204578043523366",
+    "key": "OSoE5DkpDLuWHq83LCBtJPL7dTdSm2K7YqTjQV7r4yk="
+  },
+  {
+    "recipient_id": "r-43973fd43e9847989c5650ccb0d4067c",
+    "key_id": "3380204578043523366",
+    "key": "WMwelwg8rVQmmwK6Sdu5saaGlJ7nT9KwTCsqtmjgeFs="
+  },
+  {
+    "recipient_id": "r-4bb35a76b9fa4b94bc4869aea00cbd13",
+    "key_id": "3380204578043523366",
+    "key": "86m3WXIJD3wo2RXOKgce2fNHAVCvxTKnhJDrR8+OjC4="
+  },
+  {
+    "recipient_id": "r-4c5638717f2a44a28226cb863035e56b",
+    "key_id": "3380204578043523366",
+    "key": "svnqHINvE6RFWUTdDsk0CvXU53OsWrzhG/xnPX8oREc="
+  },
+  {
+    "recipient_id": "r-4cad59d333e34badabad5f16b04d395c",
+    "key_id": "3380204578043523366",
+    "key": "uop2hTrFCiQ4XdxWfC2SDEGe3YBVyKxrhPlDcy8moGM="
+  },
+  {
+    "recipient_id": "r-4fbef8317659486cb4253289a798d81f",
+    "key_id": "3380204578043523366",
+    "key": "fQUA1UAgpkAKq7XofkpyULOTQof7xRbGvpdjm8Z7cCc="
+  },
+  {
+    "recipient_id": "r-5059dce359f04ac89014192677b3157f",
+    "key_id": "3380204578043523366",
+    "key": "t5w8hHm4EIGM9X+JU6/TyXtoEYoQ50BqUnpQSWcLrwY="
+  },
+  {
+    "recipient_id": "r-5362fa58dec545e5810abd929eac8702",
+    "key_id": "3380204578043523366",
+    "key": "z/ZNu3kaspYzi5rPpGXnpiaBY8w6GXhuQkr4Jxwr8Xg="
+  },
+  {
+    "recipient_id": "r-54be780e2f7f4a988537813f080f4db2",
+    "key_id": "3380204578043523366",
+    "key": "wQl9tvGJOZ7YaUvZec4S/QTgWh8JznoHnoTbs7ynxmE="
+  },
+  {
+    "recipient_id": "r-55c6dc079e774a91aed71285c1dee0e1",
+    "key_id": "3380204578043523366",
+    "key": "v2b3TG4yfBDqg/IFiUgMoNSMbnKQb+LXLKXpdmrDoGY="
+  },
+  {
+    "recipient_id": "r-57df6f4f16eb4258ad0af4e02722d8fc",
+    "key_id": "3380204578043523366",
+    "key": "5KiTSKTXfVCeibEhTbcnUQJAofLJxoLEvLDn7FiwglQ="
+  },
+  {
+    "recipient_id": "r-5ba3564d49a24ab9a12ee6c287b38d4e",
+    "key_id": "3380204578043523366",
+    "key": "sB3OqLx3v7jQ1kRCe3qrGeaNC+SGVW3i2+uiXu5Z8jE="
+  },
+  {
+    "recipient_id": "r-610354e31dc74de480df36b39f66d102",
+    "key_id": "3380204578043523366",
+    "key": "y7TnABCLcZiQSSwX2JMPPKAPbIkTVpkL8i0ZsBUq/C4="
+  },
+  {
+    "recipient_id": "r-616e1b84a5a541698d4d1cd6e0b45cd7",
+    "key_id": "3380204578043523366",
+    "key": "UHLxb/E7FRMyly6t10L6YI0azIl1rEX92C4q1FYv9hM="
+  },
+  {
+    "recipient_id": "r-668a367cac0f4a07a66e67900d20eb45",
+    "key_id": "3380204578043523366",
+    "key": "gPbT9emQn1qSwmylpVzhU2VPU9ILnSnN53cmi2+jsx0="
+  },
+  {
+    "recipient_id": "r-6a9604e642254114a8147626c9a0bca6",
+    "key_id": "3380204578043523366",
+    "key": "3iU/sqQoFyg74ghAS4c85iKfvGYKrHzhoUL8VAU4IzY="
+  },
+  {
+    "recipient_id": "r-6cd19eacd14742a784853b10ec6a3d0c",
+    "key_id": "3380204578043523366",
+    "key": "w263QspzT9nvonzfuji2ZQcAITAvtBmkjtksuOULTWA="
+  },
+  {
+    "recipient_id": "r-6de6bebc7e2045c7a2887616eef2a2c3",
+    "key_id": "3380204578043523366",
+    "key": "TtDlGFR7gug+5wtNmCKa6Qj3TLnf1IeWUrc3xaNBuFw="
+  },
+  {
+    "recipient_id": "r-70a0a6ef2ad347a2986ba2bfb0d199db",
+    "key_id": "3380204578043523366",
+    "key": "BbzqpRqL9aQmBBpW2IwmHwdiaSJOrKCX18sf0Ni/03I="
+  },
+  {
+    "recipient_id": "r-8581dd73195c4f8e83a630bf2efc7345",
+    "key_id": "3380204578043523366",
+    "key": "TE8yqpqZeJt1P2l//w9Dh5/td8i3BmzwXusf6ZcA8BU="
+  },
+  {
+    "recipient_id": "r-8d5663527e0a481bbfc06ba544dfcce9",
+    "key_id": "3380204578043523366",
+    "key": "nniH57FUPi72UATZJuTue598Ue/DeIvw7lslKuf+WlU="
+  },
+  {
+    "recipient_id": "r-91b6f6814523437f982388450c15ce15",
+    "key_id": "3380204578043523366",
+    "key": "JUBjA6nlPy3RQJQN97KT/OZ23DsvdIYKlUn9n7wTIX0="
+  },
+  {
+    "recipient_id": "r-95e59ddd08344e1b9c92e3926664b0c9",
+    "key_id": "3380204578043523366",
+    "key": "5PN32BsiBdJh3Swgt56SuwIqziuSZzgPsQvkDlcPhFo="
+  },
+  {
+    "recipient_id": "r-9b7bae5359ff49a9a28e3554c3b3405d",
+    "key_id": "3380204578043523366",
+    "key": "v1NUm5hOSHCmPPyTlLxepWKjCh1tVMINddM7d/WAuDo="
+  },
+  {
+    "recipient_id": "r-a1f9c2717e5644d09b99734f950bf5a0",
+    "key_id": "3380204578043523366",
+    "key": "fOpFjdh2qvBxexbH6mIlB7p+SSo6E1Jdd/QfNJgfpGs="
+  },
+  {
+    "recipient_id": "r-a88b8d536d3d4dffaba8b57d23c046e1",
+    "key_id": "3380204578043523366",
+    "key": "t8ZqEwmzjni4nuD+n8A/4CpcAa6lQYS8A/+9C1s1OlI="
+  },
+  {
+    "recipient_id": "r-aac95d0c4f4a4c8e994c101ba168a4f0",
+    "key_id": "3380204578043523366",
+    "key": "fL6Yd3dhpcJvXx4sRmhW/vHydpmSTHsH1BD1Yh8jlkc="
+  },
+  {
+    "recipient_id": "r-b23160af3bc942f39e35c6fff73e21ec",
+    "key_id": "3380204578043523366",
+    "key": "fsnePwqAFw54BDz4WPLrDtRrgkQT/q1syipSAxhdsXw="
+  },
+  {
+    "recipient_id": "r-b757e272fe1345aa99e86a229189538b",
+    "key_id": "3380204578043523366",
+    "key": "WpC4CQ26pEiugm3/fpINNd7QYceiBOt+A2LhzrAc7nA="
+  },
+  {
+    "recipient_id": "r-c11463c414b9437e84da6620ac8562d8",
+    "key_id": "3380204578043523366",
+    "key": "/74fZJ0VEMTq8M1g+xyeFis4wS++7q80OC5i1EoERQ4="
+  },
+  {
+    "recipient_id": "r-c61c9192a7e74227b4f79b5b05fc8f28",
+    "key_id": "3380204578043523366",
+    "key": "QqpalRFTD1JLehmhMLGhuU8hzU6rK7J3MbUtiJrVSjE="
+  },
+  {
+    "recipient_id": "r-d1262cb7374847fa8c526b1bf6a45233",
+    "key_id": "3380204578043523366",
+    "key": "CUksdDNwAIvIV05EYpQkB7Hws9jw3YBRUKoK4AcRXx0="
+  },
+  {
+    "recipient_id": "r-e898f0c2a281406983446eaaa88c8695",
+    "key_id": "3380204578043523366",
+    "key": "qKCuSXJ+KIieR4g3MeyHfARDbWuTtlZV5LCYSrlLtmg="
+  },
+  {
+    "recipient_id": "r-ecb31f1d1d8d44ae9b49b92371d0e093",
+    "key_id": "3380204578043523366",
+    "key": "Te4bpOE08vfoGorPeiktkOBcL2ZlYSijqB1Du/c9uyQ="
+  },
+  {
+    "recipient_id": "r-ef4e510cf31e443b9994f7491cd4cbd8",
+    "key_id": "3380204578043523366",
+    "key": "Gt92IV01SU0IMPW0a+kt+jfeRrltrDP2bZwPRfYaDno="
+  },
+  {
+    "recipient_id": "r-f726691c35984810936a9b50a04b8281",
+    "key_id": "3380204578043523366",
+    "key": "ShuSU7Awx6HbjHvh6JtXHaM0Tjk6NmNvLKwqYWSOAUk="
   }
 ]
