@@ -6,6 +6,24 @@ The shared `dinkuskit-native-canary.yml` entry point retains its name for caller
 
 Each caller configures `CLAWSWEEPER_SPARK_ENABLED`, `CLAWSWEEPER_RELAY_REPOSITORY`, and the narrowly scoped `CLAWSWEEPER_DISPATCH_TOKEN`. Model credentials stay on the host. Existing Copilot secrets are not used by this route. Configuration and activation are separate maintainer operations; source changes do not provision credentials or start a runner.
 
+Copy the binder from `.github/workflows/clawsweeper-dispatch.yml` into each enrolled repository, then set that copy's `TARGET_REPO` / `TARGET_ID` (and the reusable-workflow `target_repository*` inputs) to the enrolled repo. The binder job skips `pull_request_target` events when `github.actor` / `github.event.sender.type` is a Bot that is not on the trusted-bot allowlist. Default allowlist is `cursor[bot]`; override per enrolled repo with repository variable `CLAWSWEEPER_TRUSTED_BOTS` (comma-separated bot logins, for example `cursor[bot],dependabot[bot]`). Human PR actors and `workflow_dispatch` are unaffected. `issue_comment` re-review requests still refuse bot comments in the bind script. Draft PRs still clean-skip after bind.
+
+Enrolled binder copies that need the same dispatch-side bot guard (do not open those PRs from this change):
+
+- `dinkuskit/clawsweeper` (this template)
+- `dinkuskit/blocks`
+- `dinkuskit/bundles`
+- `dinkuskit/commerce`
+- `dinkuskit/coupons`
+- `dinkuskit/dinkuskit`
+- `dinkuskit/inventory`
+- `dinkuskit/payments`
+- `dinkuskit/ship`
+- `dinkuskit/template-store`
+- `dinkuskit/template-services`
+- `dinkuskit/template-marketing`
+- `saari-co/SmokySkills` (when that repo's binder is present)
+
 Native events include opened, reopened, edited, synchronized, and ready-for-review PRs. Trusted maintainers can request `@clawsweeper review` or `@clawsweeper re-review`. A manual workflow run can request proposal-only evidence with publication disabled. Drafts and stale source are rejected. Automatic fork reviews require a trusted maintainer command. Review comments, labels, and the DinkusKit state ledger remain native outputs; repair, close, merge, release, and deployment are not authorized by a review.
 
 Before merge, the working agent checks CI and both reviewers against the current source and resolves findings. Queue receipts and labels alone do not satisfy that requirement. Repo-specific human approval rules remain in force.

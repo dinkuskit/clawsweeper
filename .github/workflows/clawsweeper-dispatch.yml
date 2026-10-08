@@ -1,6 +1,7 @@
 name: ClawSweeper dispatch
 
 # Native events are independent of CI and agent-owned OpenClaw review.
+# Enrolled product repos copy this binder and set TARGET_REPO / TARGET_ID.
 on:
   pull_request_target:
     types: [opened, reopened, edited, synchronize, ready_for_review]
@@ -22,7 +23,24 @@ permissions: {}
 
 jobs:
   bind:
-    if: vars.CLAWSWEEPER_SPARK_ENABLED == 'true'
+    # Skip untrusted bot PR actors at the source so the relay never starts.
+    # Humans and workflow_dispatch are unaffected. issue_comment bot refusal
+    # stays in the bind script below (re-review commands remain human-only).
+    # Allowlist: repository variable CLAWSWEEPER_TRUSTED_BOTS (comma-separated
+    # bot logins), defaulting to cursor[bot].
+    if: >-
+      vars.CLAWSWEEPER_SPARK_ENABLED == 'true' &&
+      (
+        github.event_name != 'pull_request_target' ||
+        (
+          github.event.sender.type != 'Bot' &&
+          !endsWith(github.actor, '[bot]')
+        ) ||
+        contains(
+          format(',{0},', vars.CLAWSWEEPER_TRUSTED_BOTS || 'cursor[bot]'),
+          format(',{0},', github.actor)
+        )
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
