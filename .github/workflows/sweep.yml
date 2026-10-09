@@ -2111,6 +2111,26 @@ jobs:
           done
           exit 1
 
+      - name: Notify ryan-desk webhook
+        if: ${{ always() && steps.publication-context.outputs.claimed == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          RYAN_DESK_WEBHOOK_URL: ${{ secrets.RYAN_DESK_WEBHOOK_URL }}
+          RYAN_DESK_WEBHOOK_KEY: ${{ secrets.RYAN_DESK_WEBHOOK_KEY }}
+          TARGET_REPO: ${{ steps.publication-context.outputs.target_repo }}
+          ITEM_NUMBER: ${{ steps.publication-context.outputs.item_number }}
+          HEAD_SHA: ${{ steps.publication-context.outputs.source_sha }}
+          OUTCOME: ${{ steps.exact-review-publication-result.outputs.outcome || 'failure' }}
+          PUBLISH_OUTCOME: ${{ steps.publish-event-result.outcome }}
+          COMPLETION_KIND: ${{ steps.exact-review-publication-result.outputs.completion_kind }}
+          REASON_CODE: ${{ steps.exact-review-publication-result.outputs.reason_code }}
+          WEBHOOK_EVENT: review_completed
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: bash scripts/ryan-desk-webhook.sh
+
       - name: Mark active lease retry waiting
         if: ${{ always() && steps.publication-context.outputs.claimed == 'true' && steps.publication-context.outputs.has_command_context == 'true' && steps.exact-review-publication-result.outputs.outcome == 'success' && steps.exact-review-publication-result.outputs.completion_kind == 'retryable_failure' && steps.exact-review-publication-result.outputs.reason_code == 'review_lease_active' && steps.complete-exact-review-publication.outcome == 'success' }}
         continue-on-error: true

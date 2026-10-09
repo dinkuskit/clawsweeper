@@ -1,0 +1,32 @@
+name: Test ryan-desk webhook
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/ryan-desk-webhook-test.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-ping:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Notify ryan-desk webhook
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          RYAN_DESK_WEBHOOK_URL: ${{ secrets.RYAN_DESK_WEBHOOK_URL }}
+          RYAN_DESK_WEBHOOK_KEY: ${{ secrets.RYAN_DESK_WEBHOOK_KEY }}
+          TARGET_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || 'null' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WEBHOOK_EVENT: test_ping
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: bash scripts/ryan-desk-webhook.sh
