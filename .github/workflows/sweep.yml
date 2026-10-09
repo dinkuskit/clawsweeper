@@ -2118,6 +2118,7 @@ jobs:
         env:
           RYAN_DESK_WEBHOOK_URL: ${{ secrets.RYAN_DESK_WEBHOOK_URL }}
           RYAN_DESK_WEBHOOK_KEY: ${{ secrets.RYAN_DESK_WEBHOOK_KEY }}
+          GH_TOKEN: ${{ steps.target-write-token.outputs.token }}
           TARGET_REPO: ${{ steps.publication-context.outputs.target_repo }}
           ITEM_NUMBER: ${{ steps.publication-context.outputs.item_number }}
           HEAD_SHA: ${{ steps.publication-context.outputs.source_sha }}

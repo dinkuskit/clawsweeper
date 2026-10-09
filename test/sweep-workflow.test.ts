@@ -16,6 +16,75 @@ import YAML from "yaml";
 import { makeTreeReadOnlyForTest, restoreTreeModesForTest } from "../dist/clawsweeper.js";
 import { readText, tmpPrefix } from "./helpers.ts";
 
+test("ryan-desk review notification includes the durable review comment URL", () => {
+  const tempDir = mkdtempSync(tmpPrefix("ryan-desk-webhook-"));
+  const binDir = join(tempDir, "bin");
+  const payloadPath = join(tempDir, "payload.json");
+  mkdirSync(binDir);
+  try {
+    writeFileSync(
+      join(binDir, "gh"),
+      `#!/bin/sh
+test "$GH_TOKEN" = target-token || exit 91
+printf '%s' '[{"body":"<!-- clawsweeper-review item=42 -->","created_at":"2026-10-09T00:00:00Z","html_url":"https://github.com/openclaw/openclaw/issues/42#issuecomment-99"}]'
+`,
+    );
+    writeFileSync(
+      join(binDir, "curl"),
+      `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--data-binary" ]; then
+    printf '%s' "$2" > "$RYAN_DESK_TEST_PAYLOAD"
+    shift 2
+  else
+    shift
+  fi
+done
+printf '200'
+`,
+    );
+    chmodSync(join(binDir, "gh"), 0o755);
+    chmodSync(join(binDir, "curl"), 0o755);
+
+    const output = execFileSync("bash", ["scripts/ryan-desk-webhook.sh"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH}`,
+        GH_TOKEN: "target-token",
+        RYAN_DESK_TEST_PAYLOAD: payloadPath,
+        RYAN_DESK_WEBHOOK_URL: "https://example.test/webhook",
+        RYAN_DESK_WEBHOOK_KEY: "sender-key",
+        TARGET_REPO: "openclaw/openclaw",
+        ITEM_NUMBER: "42",
+        HEAD_SHA: "abc123",
+        GITHUB_SERVER_URL: "https://github.com",
+        GITHUB_REPOSITORY: "dinkuskit/clawsweeper",
+        GITHUB_RUN_ID: "123",
+        WEBHOOK_EVENT: "review_completed",
+      },
+    });
+
+    const payload = JSON.parse(readFileSync(payloadPath, "utf8")) as {
+      review_comment_url?: string;
+    };
+    assert.match(output, /ryan-desk webhook HTTP 200/);
+    assert.equal(
+      payload.review_comment_url,
+      "https://github.com/openclaw/openclaw/issues/42#issuecomment-99",
+    );
+
+    const workflow = readText(".github/workflows/sweep.yml");
+    const notifyStart = workflow.indexOf("\n      - name: Notify ryan-desk webhook");
+    const notifyEnd = workflow.indexOf("\n      - name:", notifyStart + 1);
+    const notifyStep = workflow.slice(notifyStart, notifyEnd);
+    assert.match(notifyStep, /GH_TOKEN: \$\{\{ steps\.target-write-token\.outputs\.token \}\}/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("sweep keeps optional media tooling out of review startup", () => {
   const workflow = readText(".github/workflows/sweep.yml");
 
