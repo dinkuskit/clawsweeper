@@ -26,7 +26,11 @@ test("ryan-desk review notification includes the durable review comment URL", ()
       join(binDir, "gh"),
       `#!/bin/sh
 test "$GH_TOKEN" = target-token || exit 91
-printf '%s' '[{"body":"<!-- clawsweeper-review item=42 -->","created_at":"2026-10-09T00:00:00Z","html_url":"https://github.com/openclaw/openclaw/issues/42#issuecomment-99"}]'
+case "$*" in
+  *"clawsweeper-review item=42"*) ;;
+  *) exit 92 ;;
+esac
+printf '%s' 'https://github.com/openclaw/openclaw/issues/42#issuecomment-99'
 `,
     );
     writeFileSync(
