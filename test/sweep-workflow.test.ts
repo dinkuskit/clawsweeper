@@ -17,7 +17,7 @@ import { makeTreeReadOnlyForTest, restoreTreeModesForTest } from "../dist/clawsw
 import { readText, tmpPrefix } from "./helpers.ts";
 
 test("ryan-desk review notification includes the durable review comment URL", () => {
-  const tempDir = mkdtempSync(tmpPrefix("ryan-desk-webhook-"));
+  const tempDir = mkdtempSync(`${tmpPrefix}ryan-desk-webhook-`);
   const binDir = join(tempDir, "bin");
   const payloadPath = join(tempDir, "payload.json");
   mkdirSync(binDir);
