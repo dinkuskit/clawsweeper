@@ -30,6 +30,32 @@ test("ryan-desk webhook test covers workflow and notifier script changes", () =>
   assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
 });
 
+test("ryan-desk webhook PR validation cannot consume live secrets", () => {
+  const workflow = YAML.parse(readText(".github/workflows/ryan-desk-webhook-test.yml")) as {
+    jobs: Record<
+      string,
+      {
+        if: string;
+        steps: Array<{
+          uses?: string;
+          with?: Record<string, unknown>;
+          env?: Record<string, string>;
+        }>;
+      }
+    >;
+  };
+  const validation = workflow.jobs["test-ping"];
+  assert.equal(validation.if, "${{ github.event_name == 'pull_request' }}");
+  assert.doesNotMatch(JSON.stringify(validation), /secrets\./);
+  const live = workflow.jobs["live-ping"];
+  assert.equal(
+    live.if,
+    "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}",
+  );
+  assert.equal(live.steps[0].with?.ref, "refs/heads/main");
+  assert.match(JSON.stringify(live), /secrets\.RYAN_DESK_WEBHOOK_KEY/);
+});
+
 test("ryan-desk review notification includes the durable review comment URL", () => {
   const tempDir = mkdtempSync(`${tmpPrefix}ryan-desk-webhook-`);
   const binDir = join(tempDir, "bin");
