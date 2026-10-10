@@ -82,7 +82,7 @@ test("malformed relay inputs fail before a dispatch payload exists", () => {
 });
 
 test("relay binds its exact request artifact before dispatch", () => {
-  const [prepare, artifact, queue, dispatch] = workflow.jobs.relay.steps;
+  const [prepare, queue, artifact, dispatch] = workflow.jobs.relay.steps;
   assert.equal(artifact.uses, "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
   assert.equal(artifact.with.name, "clawsweeper-request-${{ github.run_attempt }}");
   assert.equal(artifact.with.path, "${{ runner.temp }}/clawsweeper-request.json");
@@ -94,7 +94,7 @@ test("relay binds its exact request artifact before dispatch", () => {
 });
 
 test("DO queue modes preserve legacy fallback and never expose the secret", () => {
-  const [, artifact, queue, dispatch] = workflow.jobs.relay.steps;
+  const [, queue, artifact, dispatch] = workflow.jobs.relay.steps;
   assert.equal(queue["continue-on-error"], true);
   assert.match(String(queue.if), /'shadow'/);
   assert.match(String(queue.if), /'primary'/);

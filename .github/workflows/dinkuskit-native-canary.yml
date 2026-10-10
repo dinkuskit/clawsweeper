@@ -111,14 +111,6 @@ jobs:
           }
           print(json.dumps({'event_type': 'clawsweeper_native_pr', 'client_payload': payload}))
           PYREQUEST
-      - name: Bind the request to this workflow attempt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: clawsweeper-request-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/clawsweeper-request.json
-          if-no-files-found: error
-          retention-days: 7
-        if: vars.CLAWSWEEPER_DO_QUEUE_MODE != 'primary' || steps.admit-do-queue.outcome != 'success'
       - name: Admit the request to the Durable Object queue
         id: admit-do-queue
         if: vars.CLAWSWEEPER_DO_QUEUE_MODE == 'shadow' || vars.CLAWSWEEPER_DO_QUEUE_MODE == 'primary'
@@ -178,6 +170,14 @@ jobs:
               raise RuntimeError("queue admission request failed") from error
           print(f"Durable Object queue admission succeeded ({mode}).")
           PYQUEUE
+      - name: Bind the request to this workflow attempt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: clawsweeper-request-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clawsweeper-request.json
+          if-no-files-found: error
+          retention-days: 7
+        if: vars.CLAWSWEEPER_DO_QUEUE_MODE != 'primary' || steps.admit-do-queue.outcome != 'success'
       - name: Send the bound request
         if: vars.CLAWSWEEPER_DO_QUEUE_MODE != 'primary' || steps.admit-do-queue.outcome != 'success'
         env:
