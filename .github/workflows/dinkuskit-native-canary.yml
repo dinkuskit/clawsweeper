@@ -118,7 +118,68 @@ jobs:
           path: ${{ runner.temp }}/clawsweeper-request.json
           if-no-files-found: error
           retention-days: 7
+        if: vars.CLAWSWEEPER_DO_QUEUE_MODE != 'primary' || steps.admit-do-queue.outcome != 'success'
+      - name: Admit the request to the Durable Object queue
+        id: admit-do-queue
+        if: vars.CLAWSWEEPER_DO_QUEUE_MODE == 'shadow' || vars.CLAWSWEEPER_DO_QUEUE_MODE == 'primary'
+        continue-on-error: true
+        env:
+          QUEUE_MODE: ${{ vars.CLAWSWEEPER_DO_QUEUE_MODE }}
+          QUEUE_URL: ${{ vars.CLAWSWEEPER_DO_QUEUE_URL }}
+          QUEUE_SECRET: ${{ secrets.CLAWSWEEPER_DO_QUEUE_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I - "$RUNNER_TEMP/clawsweeper-request.json" <<'PYQUEUE'
+          import hashlib
+          import hmac
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          request_path = sys.argv[1]
+          mode = os.environ.get("QUEUE_MODE", "")
+          queue_url = os.environ.get("QUEUE_URL", "").strip().rstrip("/")
+          secret = os.environ.get("QUEUE_SECRET", "")
+
+          parsed = urllib.parse.urlparse(queue_url)
+          hostname = (parsed.hostname or "").lower()
+          if parsed.scheme != "https" or not hostname or hostname == "workers.dev" or hostname.endswith(".workers.dev"):
+              raise SystemExit("Durable Object queue URL must be an HTTPS non-workers.dev URL")
+          if parsed.username or parsed.password or parsed.query or parsed.fragment:
+              raise SystemExit("Durable Object queue URL contains unsupported components")
+          if not secret:
+              raise SystemExit("Durable Object queue secret is not configured")
+
+          with open(request_path, encoding="utf-8") as request_file:
+              body = request_file.read().encode("utf-8")
+          signature = "sha256=" + hmac.new(
+              secret.encode("utf-8"), body, hashlib.sha256
+          ).hexdigest()
+          request = urllib.request.Request(
+              queue_url + "/admit",
+              data=body,
+              method="POST",
+              headers={
+                  "content-type": "application/json",
+                  "x-clawsweeper-queue-signature": signature,
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  if not 200 <= response.status < 300:
+                      raise RuntimeError(f"queue admission returned HTTP {response.status}")
+          except urllib.error.HTTPError as error:
+              raise RuntimeError(f"queue admission returned HTTP {error.code}") from error
+          except urllib.error.URLError as error:
+              raise RuntimeError("queue admission request failed") from error
+          print(f"Durable Object queue admission succeeded ({mode}).")
+          PYQUEUE
       - name: Send the bound request
+        if: vars.CLAWSWEEPER_DO_QUEUE_MODE != 'primary' || steps.admit-do-queue.outcome != 'success'
         env:
           GH_TOKEN: ${{ secrets.CLAWSWEEPER_DISPATCH_TOKEN }}
           RELAY_REPOSITORY: ${{ vars.CLAWSWEEPER_RELAY_REPOSITORY }}
