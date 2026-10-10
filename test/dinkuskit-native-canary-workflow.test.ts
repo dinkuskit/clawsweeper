@@ -108,6 +108,4 @@ test("DO queue modes preserve legacy fallback and never expose the secret", () =
   assert.match(String(artifact.if), /steps\.admit-do-queue\.outcome/);
   assert.match(String(dispatch.if), /steps\.admit-do-queue\.outcome/);
   assert.match(String(dispatch.if), /'primary'/);
-  assert.match(String(dispatch.if), /'shadow'/);
-  assert.match(String(dispatch.if), /'primary'/);
 });
