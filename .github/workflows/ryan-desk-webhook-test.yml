@@ -1,0 +1,73 @@
+name: Test ryan-desk webhook
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/ryan-desk-webhook-test.yml
+      - scripts/ryan-desk-webhook.sh
+
+permissions:
+  contents: read
+
+jobs:
+  test-ping:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate notifier with mock delivery
+        timeout-minutes: 2
+        env:
+          RYAN_DESK_WEBHOOK_URL: https://example.test/webhook
+          RYAN_DESK_WEBHOOK_KEY: mock-key
+          TARGET_REPO: example/repo
+          PR_NUMBER: "42"
+          HEAD_SHA: mock-head
+          WEBHOOK_EVENT: test_ping
+        run: |
+          mock_dir="$(mktemp -d)"
+          trap 'rm -rf "$mock_dir"' EXIT
+          export RYAN_DESK_TEST_PAYLOAD="$mock_dir/payload.json"
+          cat > "$mock_dir/curl" <<'MOCK'
+          #!/usr/bin/env bash
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "--data-binary" ]; then
+              printf '%s' "$2" > "$RYAN_DESK_TEST_PAYLOAD"
+              shift 2
+            else
+              shift
+            fi
+          done
+          printf '200'
+          MOCK
+          chmod +x "$mock_dir/curl"
+          PATH="$mock_dir:$PATH" bash scripts/ryan-desk-webhook.sh
+          jq -e '.source == "clawsweeper" and .event == "test_ping" and .test == true and .pr_number == 42 and .head_sha == "mock-head"' "$RYAN_DESK_TEST_PAYLOAD"
+
+  live-ping:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+
+      - name: Notify ryan-desk webhook
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          RYAN_DESK_WEBHOOK_URL: ${{ secrets.RYAN_DESK_WEBHOOK_URL }}
+          RYAN_DESK_WEBHOOK_KEY: ${{ secrets.RYAN_DESK_WEBHOOK_KEY }}
+          TARGET_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || 'null' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WEBHOOK_EVENT: test_ping
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: bash scripts/ryan-desk-webhook.sh
