@@ -16,6 +16,20 @@ import YAML from "yaml";
 import { makeTreeReadOnlyForTest, restoreTreeModesForTest } from "../dist/clawsweeper.js";
 import { readText, tmpPrefix } from "./helpers.ts";
 
+test("ryan-desk webhook test covers workflow and notifier script changes", () => {
+  const workflowPath = ".github/workflows/ryan-desk-webhook-test.yml";
+  const workflow = YAML.parse(readText(workflowPath)) as {
+    on: { pull_request: { paths: string[] }; workflow_dispatch: unknown };
+  };
+  for (const changedPath of [workflowPath, "scripts/ryan-desk-webhook.sh"]) {
+    assert.ok(
+      workflow.on.pull_request.paths.includes(changedPath),
+      `${changedPath} must trigger the webhook test`,
+    );
+  }
+  assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
+});
+
 test("ryan-desk review notification includes the durable review comment URL", () => {
   const tempDir = mkdtempSync(`${tmpPrefix}ryan-desk-webhook-`);
   const binDir = join(tempDir, "bin");

@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/ryan-desk-webhook-test.yml
+      - scripts/ryan-desk-webhook.sh
 
 permissions:
   contents: read
