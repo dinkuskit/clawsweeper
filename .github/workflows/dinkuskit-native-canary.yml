@@ -170,7 +170,7 @@ jobs:
           signature = 'sha256=' + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
           request = urllib.request.Request(
               'https://queue.ztoned.com/internal/intake/admit', data=raw, method='POST',
-              headers={'content-type': 'application/json', 'x-clawsweeper-exact-review-signature': signature})
+              headers={'content-type': 'application/json', 'user-agent': 'clawsweeper-queue-client/1.0', 'x-clawsweeper-exact-review-signature': signature})
           try:
               with urllib.request.urlopen(request, timeout=15) as response:
                   result = json.load(response)

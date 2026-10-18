@@ -185,6 +185,7 @@ test("queue dual-write signs the exact admit and primary acceptance exits 86", a
       const got = request.headers["x-clawsweeper-exact-review-signature"];
       seen.push({
         url: request.url,
+        user_agent: request.headers["user-agent"],
         admit: JSON.parse(raw.toString()),
         signature_ok:
           typeof got === "string" && timingSafeEqual(Buffer.from(got), Buffer.from(expected)),
@@ -215,6 +216,8 @@ test("queue dual-write signs the exact admit and primary acceptance exits 86", a
   assert.equal(seen.length, 2);
   for (const entry of seen) {
     assert.equal(entry.url, "/internal/intake/admit");
+    // The queue zone rejects Python's default urllib user agent at the edge.
+    assert.equal(entry.user_agent, "clawsweeper-queue-client/1.0");
     assert.equal(entry.signature_ok, true);
     assert.equal(entry.admit.requestId, "native:12345:1");
     assert.equal(entry.admit.repository, "dinkuskit/blocks");
