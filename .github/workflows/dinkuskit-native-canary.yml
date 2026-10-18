@@ -30,6 +30,11 @@ on:
         required: true
         type: boolean
         default: false
+      queue_mode:
+        description: Queue dual-write mode (off, shadow, or primary)
+        required: false
+        type: string
+        default: "off"
   workflow_call:
     inputs:
       target_repository:
@@ -56,10 +61,18 @@ on:
         description: Publish native review comments, labels, and state
         required: true
         type: boolean
+      queue_mode:
+        description: Queue dual-write mode (off, shadow, or primary)
+        required: false
+        type: string
+        default: "off"
     secrets:
       CLAWSWEEPER_DISPATCH_TOKEN:
         description: Scoped credential for the private review event receiver
         required: true
+      CLAWSWEEPER_DO_QUEUE_SECRET:
+        description: Shared HMAC secret for the review intake queue (shadow/primary modes)
+        required: false
 
 permissions: {}
 
@@ -122,8 +135,60 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.CLAWSWEEPER_DISPATCH_TOKEN }}
           RELAY_REPOSITORY: ${{ vars.CLAWSWEEPER_RELAY_REPOSITORY }}
+          CLAWSWEEPER_DO_QUEUE_MODE: ${{ inputs.queue_mode }}
+          CLAWSWEEPER_DO_QUEUE_SECRET: ${{ secrets.CLAWSWEEPER_DO_QUEUE_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
+          queue_status=0
+          python3 -I - <<'PYQUEUE' || queue_status=$?
+          import hashlib, hmac, json, os, sys, urllib.error, urllib.request
+          mode = os.environ.get('CLAWSWEEPER_DO_QUEUE_MODE', 'off').strip().lower()
+          if mode not in ('shadow', 'primary'):
+              print(f'ClawSweeper queue dual-write disabled (mode={mode or "off"}).')
+              raise SystemExit(0)
+          secret = os.environ.get('CLAWSWEEPER_DO_QUEUE_SECRET', '')
+          if not secret:
+              message = 'ClawSweeper queue secret is not configured.'
+              if mode == 'primary':
+                  print(message, file=sys.stderr); raise SystemExit(1)
+              print(f'::warning::{message} Continuing with Actions in shadow mode.')
+              raise SystemExit(0)
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'clawsweeper-request.json')) as handle:
+              client_payload = json.load(handle)['client_payload']
+          admit = {
+              'requestId': f"native:{client_payload['origin_run_id']}:{client_payload['origin_run_attempt']}",
+              'repository': client_payload['target_repo'],
+              'pr': int(client_payload['pr']),
+              'base': client_payload['requested_base'],
+              'head': client_payload['requested_head'],
+              'commentId': client_payload['comment_id'],
+              'kind': 'command' if client_payload['comment_id'] else 'automatic',
+              'clientPayload': client_payload,
+          }
+          raw = json.dumps(admit, separators=(',', ':')).encode()
+          signature = 'sha256=' + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+          request = urllib.request.Request(
+              'https://queue.ztoned.com/internal/intake/admit', data=raw, method='POST',
+              headers={'content-type': 'application/json', 'x-clawsweeper-exact-review-signature': signature})
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  result = json.load(response)
+              if result.get('accepted') is not True:
+                  raise ValueError(f"queue rejected admit: {result.get('reason', 'unknown')}")
+              print(f"ClawSweeper queue {mode} admit accepted (deduped={result.get('deduped') is True}).")
+              raise SystemExit(86 if mode == 'primary' else 0)
+          except Exception as error:
+              if mode == 'primary':
+                  print(f'ClawSweeper queue primary admit failed: {error}', file=sys.stderr)
+                  raise SystemExit(1)
+              print(f'::warning::ClawSweeper queue shadow admit failed; continuing with Actions: {error}')
+              raise SystemExit(0)
+          PYQUEUE
+          if [ "$queue_status" -eq 86 ]; then
+            echo 'Queue is primary for this repository; skipping Actions repository_dispatch.'
+            exit 0
+          fi
+          [ "$queue_status" -eq 0 ] || exit "$queue_status"
           gh api --method POST "repos/$RELAY_REPOSITORY/dispatches" --input "$RUNNER_TEMP/clawsweeper-request.json"
           echo 'Native request delivered. Review completion is recorded by the subscription runtime.'
