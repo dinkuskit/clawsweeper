@@ -182,10 +182,14 @@ test("queue dual-write signs the exact admit and primary acceptance exits 86", a
     request.on("end", () => {
       const raw = Buffer.concat(chunks);
       const expected = "sha256=" + createHmac("sha256", secret).update(raw).digest("hex");
-      const got = request.headers["x-clawsweeper-exact-review-signature"];
+      const headers = {};
+      for (const [name, value] of Object.entries(request.headers)) {
+        headers[name.toLowerCase()] = value;
+      }
+      const got = headers["x-clawsweeper-exact-review-signature"];
       seen.push({
         url: request.url,
-        user_agent: request.headers["user-agent"],
+        user_agent: headers["user-agent"],
         admit: JSON.parse(raw.toString()),
         signature_ok:
           typeof got === "string" && timingSafeEqual(Buffer.from(got), Buffer.from(expected)),
