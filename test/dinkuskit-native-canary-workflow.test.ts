@@ -98,7 +98,8 @@ test("relay binds its exact request artifact before dispatch", () => {
   assert.equal(artifact.with["if-no-files-found"], "error");
   assert.match(prepare.run, /origin_run_attempt/);
   assert.doesNotMatch(prepare.run, /gh api --method POST/);
-  assert.match(dispatch.run, /--input "\$RUNNER_TEMP\/clawsweeper-request.json"/);
+  assert.match(dispatch.run, /clawsweeper-request\.json/);
+  assert.doesNotMatch(dispatch.run, /dispatches/);
 });
 
 const sendStep = workflow.jobs.relay.steps[2];
@@ -153,26 +154,21 @@ function runQueueAsync(pythonSource, env) {
   });
 }
 
-test("queue dual-write is inert unless shadow or primary is selected", () => {
+test("final sender fails loudly without a queue secret, ignoring deprecated mode", () => {
   const dir = queueFixture();
-  for (const [mode, secret, expected] of [
-    ["off", "", 0],
-    ["", "", 0],
-    ["shadow", "", 0],
-    ["primary", "", 1],
-  ]) {
+  for (const mode of ["off", "", "shadow", "primary"]) {
     const result = runQueue(queuePython, {
       RUNNER_TEMP: dir,
       CLAWSWEEPER_DO_QUEUE_MODE: mode,
-      CLAWSWEEPER_DO_QUEUE_SECRET: secret,
+      CLAWSWEEPER_DO_QUEUE_SECRET: "",
     });
-    assert.equal(result.status, expected, `${mode || "unset"}: ${result.stderr}`);
+    assert.equal(result.status, 1, `${mode || "unset"}: ${result.stderr}`);
   }
-  assert.match(sendStep.run, /queue_status.*86/);
-  assert.match(sendStep.run, /skipping Actions repository_dispatch/);
+  assert.doesNotMatch(sendStep.run, /queue_status/);
+  assert.doesNotMatch(sendStep.run, /dispatches/);
 });
 
-test("queue dual-write signs the exact admit and primary acceptance exits 86", async () => {
+test("queue sender signs the exact admit and succeeds only on acceptance", async () => {
   const dir = queueFixture();
   const secret = "synthetic-test-secret";
   const seen = [];
@@ -202,22 +198,15 @@ test("queue dual-write signs the exact admit and primary acceptance exits 86", a
   try {
     const { port } = server.address();
     const localPython = queuePython.replace("https://queue.ztoned.com", `http://127.0.0.1:${port}`);
-    const shadow = await runQueueAsync(localPython, {
+    const admitted = await runQueueAsync(localPython, {
       RUNNER_TEMP: dir,
-      CLAWSWEEPER_DO_QUEUE_MODE: "shadow",
       CLAWSWEEPER_DO_QUEUE_SECRET: secret,
     });
-    assert.equal(shadow.status, 0, shadow.stderr);
-    const primary = await runQueueAsync(localPython, {
-      RUNNER_TEMP: dir,
-      CLAWSWEEPER_DO_QUEUE_MODE: "primary",
-      CLAWSWEEPER_DO_QUEUE_SECRET: secret,
-    });
-    assert.equal(primary.status, 86, primary.stderr);
+    assert.equal(admitted.status, 0, admitted.stderr);
   } finally {
     server.close();
   }
-  assert.equal(seen.length, 2);
+  assert.equal(seen.length, 1);
   for (const entry of seen) {
     assert.equal(entry.url, "/internal/intake/admit");
     // The queue zone rejects Python's default urllib user agent at the edge.
