@@ -8,14 +8,27 @@ const workflow = parse(source) as {
   jobs: { bind: { if?: string }; review: Record<string, unknown> };
 };
 
-test("dispatch binder defaults trusted bots and skips untrusted bot PR actors", () => {
+test("dispatch binder admits only ID-verified trusted bots and maintainer labels", () => {
   const bindIf = String(workflow.jobs.bind.if ?? "");
   assert.match(bindIf, /vars\.CLAWSWEEPER_SPARK_ENABLED == 'true'/);
   assert.match(bindIf, /github\.event_name != 'pull_request_target'/);
-  assert.match(bindIf, /github\.event\.sender\.type != 'Bot'/);
-  assert.match(bindIf, /endsWith\(github\.actor, '\[bot\]'\)/);
-  assert.match(bindIf, /vars\.CLAWSWEEPER_TRUSTED_BOTS \|\| 'cursor\[bot\]'/);
-  assert.match(bindIf, /format\(',\{0\},', github\.actor\)/);
+  assert.match(
+    source,
+    /TRUSTED_BOTS = \{'smoky-agent\[bot\]': 343990805, 'dinkuskit-release\[bot\]': 342199489\}/,
+  );
+  assert.match(source, /\(user or \{\}\)\.get\('id'\) != expected/);
+  assert.match(
+    source,
+    /user\.get\('login'\) == 'dinkuskit-release\[bot\]' and not target\.startswith\('dinkuskit\/'\)/,
+  );
+  assert.match(source, /author\.get\('type'\) == 'Bot' and not bot_trusted\(author\): skip\(\)/);
+  assert.match(
+    source,
+    /\(event\.get\('label'\) or \{\}\)\.get\('name'\) != 'clawsweeper:review': skip\(\)/,
+  );
+  assert.match(source, /permission not in \('admin', 'maintain', 'write'\): skip\(\)/);
+  assert.match(source, /force_label_by = sender\['login'\]/);
+  assert.doesNotMatch(source, /CLAWSWEEPER_TRUSTED_BOTS|cursor\[bot\]/);
 });
 
 test("dispatch binder keeps issue_comment bot refusal in the bind script", () => {

@@ -4,7 +4,7 @@ name: ClawSweeper dispatch
 # Enrolled product repos copy this binder and set TARGET_REPO / TARGET_ID.
 on:
   pull_request_target:
-    types: [opened, reopened, edited, synchronize, ready_for_review]
+    types: [opened, reopened, edited, synchronize, ready_for_review, labeled]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -23,24 +23,16 @@ permissions: {}
 
 jobs:
   bind:
-    # Skip untrusted bot PR actors at the source so the relay never starts.
-    # Humans and workflow_dispatch are unaffected. issue_comment bot refusal
-    # stays in the bind script below (re-review commands remain human-only).
-    # Allowlist: repository variable CLAWSWEEPER_TRUSTED_BOTS (comma-separated
-    # bot logins), defaulting to cursor[bot].
     if: >-
       vars.CLAWSWEEPER_SPARK_ENABLED == 'true' &&
-      (
-        github.event_name != 'pull_request_target' ||
-        (
-          github.event.sender.type != 'Bot' &&
-          !endsWith(github.actor, '[bot]')
-        ) ||
-        contains(
-          format(',{0},', vars.CLAWSWEEPER_TRUSTED_BOTS || 'cursor[bot]'),
-          format(',{0},', github.actor)
-        )
-      )
+      (github.event_name != 'pull_request_target' ||
+       github.event.action != 'edited' ||
+       toJSON(github.event.changes) != '{}') &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.issue.pull_request &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        contains(github.event.comment.body, '@clawsweeper')))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -52,6 +44,7 @@ jobs:
       base_sha: ${{ steps.live.outputs.base_sha }}
       head_sha: ${{ steps.live.outputs.head_sha }}
       publish: ${{ steps.live.outputs.publish }}
+      force_label_by: ${{ steps.live.outputs.force_label_by }}
     steps:
       - name: Bind the native event to the current PR
         id: live
@@ -75,11 +68,16 @@ jobs:
               raise SystemExit(0)
           event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
           kind = os.environ['GITHUB_EVENT_NAME']
+          if kind == 'pull_request_target' and event.get('action') == 'edited' and not event.get('changes'):
+              skip()
           if kind == 'issue_comment':
               comment = event['comment']
               if not event['issue'].get('pull_request') or comment['user']['type'] == 'Bot': skip()
-              if comment.get('author_association') not in {'OWNER', 'MEMBER', 'COLLABORATOR'}: skip()
-              if not re.search(r'^\s*@clawsweeper (?:re-)?review\s*$', comment.get('body', ''), re.I | re.M): skip()
+              body = comment.get('body', '')
+              if not isinstance(body, str) or len(body) > 65536: skip()
+              commands = [match.group(1).lower() for line in body.splitlines()
+                          if (match := re.fullmatch(r'\s*@clawsweeper\s+(review|re-review|re-run)\s*', line, re.I))]
+              if len(commands) != 1: skip()
           target = os.environ['TARGET_REPO']
           repo = get('repos/' + target)
           if str(repo['id']) != os.environ['TARGET_ID']: raise SystemExit('Repository identity changed')
@@ -87,7 +85,33 @@ jobs:
           if not re.fullmatch(r'[1-9][0-9]*', number): raise SystemExit('Invalid PR number')
           pull = get(f'repos/{target}/pulls/{number}')
           if pull['state'] != 'open' or pull['draft']: skip()
+          if kind == 'issue_comment':
+              # #269: comments are maintainer-only; no author re-review tier.
+              maintainer = comment.get('author_association') in {'OWNER', 'MEMBER', 'COLLABORATOR'}
+              if not maintainer: skip()
           if pull['base']['repo']['id'] != repo['id'] or pull['base']['ref'] != repo['default_branch']: skip()
+          # #269 sender trust/label policy: identical ID-verified bot
+          # allowlist across both tenants; untrusted bot PRs are not
+          # admitted until a maintainer trigger (label or comment).
+          TRUSTED_BOTS = {'smoky-agent[bot]': 343990805, 'dinkuskit-release[bot]': 342199489}
+          def bot_trusted(user):
+              expected = TRUSTED_BOTS.get((user or {}).get('login'))
+              if expected is None or (user or {}).get('id') != expected: return False
+              if user.get('login') == 'dinkuskit-release[bot]' and not target.startswith('dinkuskit/'): return False
+              return True
+          force_label_by = ''
+          if kind == 'pull_request_target' and event.get('action') == 'labeled':
+              if (event.get('label') or {}).get('name') != 'clawsweeper:review': skip()
+              sender = event.get('sender') or {}
+              if sender.get('type') != 'User' or not sender.get('login'): skip()
+              try:
+                  permission = get(f"repos/{target}/collaborators/{sender['login']}/permission")['permission']
+              except Exception: skip()
+              if permission not in ('admin', 'maintain', 'write'): skip()
+              force_label_by = sender['login']
+          elif kind == 'pull_request_target':
+              author = pull.get('user') or {}
+              if author.get('type') == 'Bot' and not bot_trusted(author): skip()
           base = get(f"repos/{target}/git/ref/heads/{repo['default_branch']}")['object']['sha']
           head = pull['head']['sha']
           if any(not re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (base, head)): raise SystemExit('Invalid source tuple')
@@ -95,12 +119,16 @@ jobs:
           publish = 'true' if kind != 'workflow_dispatch' else os.environ['MANUAL_PUBLISH']
           if publish not in {'true', 'false'}: raise SystemExit('Invalid publication mode')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write(f'requested=true\npr_number={number}\nbase_sha={base}\nhead_sha={head}\npublish={publish}\n')
+              out.write(f'requested=true\npr_number={number}\nbase_sha={base}\nhead_sha={head}\npublish={publish}\nforce_label_by={force_label_by}\n')
           PYBIND
+      # The native receiver owns pickup, started, and terminal receipts.
 
   review:
     needs: bind
     if: needs.bind.outputs.requested == 'true'
+    concurrency:
+      group: ${{ github.repository }}-clawsweeper-dispatch-${{ needs.bind.outputs.pr_number }}
+      cancel-in-progress: true
     permissions: {}
     uses: ./.github/workflows/dinkuskit-native-canary.yml
     with:
@@ -110,7 +138,7 @@ jobs:
       expected_base_sha: ${{ needs.bind.outputs.base_sha }}
       expected_head_sha: ${{ needs.bind.outputs.head_sha }}
       publish: ${{ needs.bind.outputs.publish == 'true' }}
-      queue_mode: ${{ vars.CLAWSWEEPER_DO_QUEUE_MODE }}
+      force_label_by: ${{ needs.bind.outputs.force_label_by }}
     secrets:
       CLAWSWEEPER_DISPATCH_TOKEN: ${{ secrets.CLAWSWEEPER_DISPATCH_TOKEN }}
       CLAWSWEEPER_DO_QUEUE_SECRET: ${{ secrets.CLAWSWEEPER_DO_QUEUE_SECRET }}
