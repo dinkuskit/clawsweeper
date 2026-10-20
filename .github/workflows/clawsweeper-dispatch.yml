@@ -51,7 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_REPO: dinkuskit/clawsweeper
-          TARGET_ID: '1308874391'
+          TARGET_ID: "1308874391"
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
           MANUAL_PUBLISH: ${{ inputs.publish }}
         shell: bash
@@ -133,7 +133,7 @@ jobs:
     uses: ./.github/workflows/dinkuskit-native-canary.yml
     with:
       target_repository: clawsweeper
-      target_repository_id: '1308874391'
+      target_repository_id: "1308874391"
       pr_number: ${{ needs.bind.outputs.pr_number }}
       expected_base_sha: ${{ needs.bind.outputs.base_sha }}
       expected_head_sha: ${{ needs.bind.outputs.head_sha }}
