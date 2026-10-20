@@ -1,0 +1,173 @@
+name: ClawSweeper ready PR
+
+# Additive native event transport. Keep existing comment and issue workflows.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, edited, labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: string
+      publish:
+        description: 'Publish review results'
+        required: false
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  relay:
+    if: vars.CLAWSWEEPER_SPARK_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Bind the native event to the current PR
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPO: ${{ github.repository }}
+          TARGET_ID: ${{ github.repository_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          PUBLISH: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PYBIND'
+          import json, os, re, subprocess
+          def get(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          def skip():
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+                  out.write('requested=false\n')
+              raise SystemExit(0)
+          event_name = os.environ.get('GITHUB_EVENT_NAME')
+          if event_name not in ('pull_request_target', 'workflow_dispatch'): skip()
+          with open(os.environ['GITHUB_EVENT_PATH']) as event_file:
+              event = json.load(event_file)
+          if event_name == 'pull_request_target' and event.get('action') == 'edited' and 'base' not in event.get('changes', {}): skip()
+          target = os.environ['TARGET_REPO']
+          repo = get('repos/' + target)
+          if str(repo['id']) != os.environ['TARGET_ID']: raise SystemExit('Repository identity changed')
+          if repo.get('archived') or repo.get('disabled'): skip()
+          number = os.environ.get('PR_NUMBER', '')
+          if not re.fullmatch(r'[1-9][0-9]*', number): raise SystemExit('Invalid PR number')
+          pull = get(f'repos/{target}/pulls/{number}')
+          if pull['state'] != 'open' or pull['draft']: skip()
+          if pull['head']['repo']['id'] != repo['id']: skip()
+          if pull['base']['repo']['id'] != repo['id'] or pull['base']['ref'] != repo['default_branch']: skip()
+          # #269 sender trust/label policy. Automatic bot-authored PRs are
+          # admitted only for the identical ID-verified allowlist shared by
+          # both tenants; untrusted bot PRs are simply not admitted (no
+          # queue item, nothing executes) until a maintainer trigger.
+          TRUSTED_BOTS = {'smoky-agent[bot]': 343990805, 'dinkuskit-release[bot]': 342199489}
+          def bot_trusted(user):
+              expected = TRUSTED_BOTS.get((user or {}).get('login'))
+              if expected is None or (user or {}).get('id') != expected: return False
+              if user.get('login') == 'dinkuskit-release[bot]' and not target.startswith('dinkuskit/'): return False
+              return True
+          force_label_by = ''
+          if event_name == 'pull_request_target' and event.get('action') == 'labeled':
+              # Maintainer force-review trigger: exact label, independent
+              # human labeler with live admin/maintain/write. Drafts never
+              # admit (checked above). Admission below is the ordinary
+              # automatic tuple identity, so it dedupes into a live item.
+              if (event.get('label') or {}).get('name') != 'clawsweeper:review': skip()
+              sender = event.get('sender') or {}
+              if sender.get('type') != 'User' or not sender.get('login'): skip()
+              try:
+                  permission = get(f"repos/{target}/collaborators/{sender['login']}/permission")['permission']
+              except Exception: skip()
+              if permission not in ('admin', 'maintain', 'write'): skip()
+              force_label_by = sender['login']
+          elif event_name == 'pull_request_target':
+              author = pull.get('user') or {}
+              if author.get('type') == 'Bot' and not bot_trusted(author): skip()
+          base = pull['base']['sha']
+          head = pull['head']['sha']
+          if any(not re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (base, head)): raise SystemExit('Invalid source tuple')
+          pub = 'true'
+          if event_name == 'workflow_dispatch' and os.environ.get('PUBLISH', '').lower() == 'false':
+              pub = 'false'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'requested=true\npr_number={number}\nbase_sha={base}\nhead_sha={head}\npublish={pub}\nforce_label_by={force_label_by}\n')
+          PYBIND
+      - name: Bind request to this source workflow
+        if: steps.live.outputs.requested == 'true'
+        env:
+          TARGET_REPO: ${{ github.repository }}
+          TARGET_ID: ${{ github.repository_id }}
+          PR: ${{ steps.live.outputs.pr_number }}
+          BASE: ${{ steps.live.outputs.base_sha }}
+          HEAD: ${{ steps.live.outputs.head_sha }}
+          PUBLISH: ${{ steps.live.outputs.publish }}
+          FORCE_LABEL_BY: ${{ steps.live.outputs.force_label_by }}
+        run: |
+          python3 -I - <<'PYREQUEST' > "$RUNNER_TEMP/clawsweeper-request.json"
+          import json, os
+          payload = dict(target_repo=os.environ['TARGET_REPO'], repository_id=os.environ['TARGET_ID'],
+                         pr=os.environ['PR'], requested_base=os.environ['BASE'], requested_head=os.environ['HEAD'],
+                         origin_repository=os.environ['GITHUB_REPOSITORY'], origin_run_id=os.environ['GITHUB_RUN_ID'],
+                         origin_run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], comment_id='',
+                         publish=(os.environ.get('PUBLISH', 'true') == 'true'))
+          if os.environ.get('FORCE_LABEL_BY'):
+              payload['force_label_by'] = os.environ['FORCE_LABEL_BY']
+              # GitHub caps repository_dispatch client_payload at 10 keys;
+              # origin_repository defaults to the target repo downstream.
+              if payload.get('origin_repository') == payload.get('target_repo'):
+                  del payload['origin_repository']
+          print(json.dumps(dict(event_type='clawsweeper_native_pr', client_payload=payload)))
+          PYREQUEST
+      - name: Store immutable request evidence
+        if: steps.live.outputs.requested == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: clawsweeper-request-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clawsweeper-request.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Dispatch to private review host
+        if: steps.live.outputs.requested == 'true'
+        env:
+          CLAWSWEEPER_DO_QUEUE_SECRET: ${{ secrets.CLAWSWEEPER_DO_QUEUE_SECRET }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PYQUEUE'
+          import hashlib, hmac, json, os, sys, urllib.error, urllib.request
+          # #269 final sender: the signed queue is the only front door.
+          # Admit succeeds or this sender fails loudly — queue failure
+          # pauses reviews; there is no Actions dispatch fallback and no
+          # per-repository queue-mode variable.
+          secret = os.environ.get('CLAWSWEEPER_DO_QUEUE_SECRET', '')
+          if not secret:
+              print('ClawSweeper queue secret is not configured.', file=sys.stderr)
+              raise SystemExit(1)
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'clawsweeper-request.json')) as handle:
+              client_payload = json.load(handle)['client_payload']
+          admit = {
+              'requestId': f"native:{client_payload['origin_run_id']}:{client_payload['origin_run_attempt']}",
+              'repository': client_payload['target_repo'],
+              'pr': int(client_payload['pr']),
+              'base': client_payload['requested_base'],
+              'head': client_payload['requested_head'],
+              'commentId': client_payload['comment_id'],
+              'kind': 'command' if client_payload['comment_id'] else 'automatic',
+              'clientPayload': client_payload,
+          }
+          raw = json.dumps(admit, separators=(',', ':')).encode()
+          signature = 'sha256=' + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+          request = urllib.request.Request(
+              'https://queue.ztoned.com/internal/intake/admit', data=raw, method='POST',
+              headers={'content-type': 'application/json', 'user-agent': 'clawsweeper-queue-client/1.0', 'x-clawsweeper-exact-review-signature': signature})
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  result = json.load(response)
+              if result.get('accepted') is not True:
+                  raise ValueError(f"queue rejected admit: {result.get('reason', 'unknown')}")
+              print(f"ClawSweeper queue admit accepted (deduped={result.get('deduped') is True}).")
+          except Exception as error:
+              print(f'ClawSweeper queue admit failed: {error}', file=sys.stderr)
+              raise SystemExit(1)
+          PYQUEUE

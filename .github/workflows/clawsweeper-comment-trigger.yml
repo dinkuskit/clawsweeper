@@ -1,0 +1,108 @@
+name: ClawSweeper native comment request
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  relay:
+    if: >-
+      vars.CLAWSWEEPER_NATIVE_INTAKE_ENABLED == 'true' &&
+      github.event.issue.pull_request != null && github.event.comment.user.type == 'User'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Bind the supported command to the current PR
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I - <<'PY' > "$RUNNER_TEMP/clawsweeper-request.json"
+          import json, os, re, subprocess
+          with open(os.environ['GITHUB_EVENT_PATH']) as source:
+              event = json.load(source)
+          comment = event['comment']
+          commands = [m[1].lower() for line in comment.get('body', '').splitlines()
+                      if (m := re.fullmatch(r'\s*@clawsweeper\s+(review|re-review|re-run)\s*', line, re.I))]
+          if len(commands) != 1:
+              raise SystemExit(0)
+          repo = os.environ['GITHUB_REPOSITORY']
+          if not repo.startswith(('saari-co/', 'dinkuskit/')):
+              raise SystemExit(0)
+          number = event['issue']['number']
+          def get(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          pull = get(f'repos/{repo}/pulls/{number}')
+          metadata = get('repos/' + repo)
+          if pull['state'] != 'open' or pull['draft'] or pull['base']['ref'] != metadata['default_branch']:
+              raise SystemExit(0)
+          # #269: comments are maintainer-only for enqueue + publish; the
+          # silent author re-review tier is removed.
+          trusted = comment.get('author_association') in {'OWNER', 'MEMBER', 'COLLABORATOR'}
+          if not trusted:
+              raise SystemExit(0)
+          payload = dict(target_repo=repo, repository_id=str(metadata['id']), pr=str(number),
+              requested_base=pull['base']['sha'], requested_head=pull['head']['sha'],
+              origin_repository=repo, origin_run_id=os.environ['GITHUB_RUN_ID'],
+              origin_run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], comment_id=str(comment['id']),
+              publish=True)
+          print(json.dumps(dict(event_type='clawsweeper_native_pr', client_payload=payload)))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('requested=true\n')
+          PY
+      - name: Preserve exact source request
+        if: steps.request.outputs.requested == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: clawsweeper-request-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clawsweeper-request.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Relay for full admission
+        if: steps.request.outputs.requested == 'true'
+        env:
+          CLAWSWEEPER_DO_QUEUE_SECRET: ${{ secrets.CLAWSWEEPER_DO_QUEUE_SECRET }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PYQUEUE'
+          import hashlib, hmac, json, os, sys, urllib.error, urllib.request
+          # #269 final sender: the signed queue is the only front door.
+          # Admit succeeds or this sender fails loudly — queue failure
+          # pauses reviews; there is no Actions dispatch fallback and no
+          # per-repository queue-mode variable.
+          secret = os.environ.get('CLAWSWEEPER_DO_QUEUE_SECRET', '')
+          if not secret:
+              print('ClawSweeper queue secret is not configured.', file=sys.stderr)
+              raise SystemExit(1)
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'clawsweeper-request.json')) as handle:
+              client_payload = json.load(handle)['client_payload']
+          admit = {
+              'requestId': f"native:{client_payload['origin_run_id']}:{client_payload['origin_run_attempt']}",
+              'repository': client_payload['target_repo'],
+              'pr': int(client_payload['pr']),
+              'base': client_payload['requested_base'],
+              'head': client_payload['requested_head'],
+              'commentId': client_payload['comment_id'],
+              'kind': 'command' if client_payload['comment_id'] else 'automatic',
+              'clientPayload': client_payload,
+          }
+          raw = json.dumps(admit, separators=(',', ':')).encode()
+          signature = 'sha256=' + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+          request = urllib.request.Request(
+              'https://queue.ztoned.com/internal/intake/admit', data=raw, method='POST',
+              headers={'content-type': 'application/json', 'user-agent': 'clawsweeper-queue-client/1.0', 'x-clawsweeper-exact-review-signature': signature})
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  result = json.load(response)
+              if result.get('accepted') is not True:
+                  raise ValueError(f"queue rejected admit: {result.get('reason', 'unknown')}")
+              print(f"ClawSweeper queue admit accepted (deduped={result.get('deduped') is True}).")
+          except Exception as error:
+              print(f'ClawSweeper queue admit failed: {error}', file=sys.stderr)
+              raise SystemExit(1)
+          PYQUEUE
+          echo 'Request delivered for validation; this does not claim acceptance or review clearance.'
