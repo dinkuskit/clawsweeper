@@ -35,6 +35,11 @@ on:
         required: false
         type: string
         default: "off"
+      force_label_by:
+        description: Verified maintainer who applied the clawsweeper:review force label (#269)
+        required: false
+        type: string
+        default: ""
   workflow_call:
     inputs:
       target_repository:
@@ -66,6 +71,11 @@ on:
         required: false
         type: string
         default: "off"
+      force_label_by:
+        description: Verified maintainer who applied the clawsweeper:review force label (#269)
+        required: false
+        type: string
+        default: ""
     secrets:
       CLAWSWEEPER_DISPATCH_TOKEN:
         description: Scoped credential for the private review event receiver
@@ -96,6 +106,7 @@ jobs:
           ORIGIN_RUN_ID: ${{ github.run_id }}
           ORIGIN_RUN_ATTEMPT: ${{ github.run_attempt }}
           COMMENT_ID: ${{ github.event.comment.id }}
+          FORCE_LABEL_BY: ${{ inputs.force_label_by }}
         shell: bash
         run: |
           set -euo pipefail
@@ -122,6 +133,11 @@ jobs:
               'comment_id': os.environ.get('COMMENT_ID', ''),
               'publish': publish,
           }
+          force_label_by = os.environ.get('FORCE_LABEL_BY', '')
+          if force_label_by:
+              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]*', force_label_by):
+                  raise SystemExit('Invalid review input: FORCE_LABEL_BY')
+              payload['force_label_by'] = force_label_by
           print(json.dumps({'event_type': 'clawsweeper_native_pr', 'client_payload': payload}))
           PYREQUEST
       - name: Bind the request to this workflow attempt
