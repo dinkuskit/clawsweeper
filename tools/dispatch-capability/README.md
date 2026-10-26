@@ -1,7 +1,7 @@
 # Fixed review dispatch capability
 
 This operator-run workflow seals the existing central dispatch credential to a
-reviewed registry of 60 GitHub Actions public encryption keys. It accepts no
+reviewed registry of 62 GitHub Actions public encryption keys. It accepts no
 caller-provided recipient or key. The original eight public recipients retain
 named entries. Additional recipients use random opaque labels; no private
 repository names or repository IDs belong in this public registry or output.

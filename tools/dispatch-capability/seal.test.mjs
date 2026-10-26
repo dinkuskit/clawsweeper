@@ -20,7 +20,7 @@ test('only fixed recipient keys recover the fixture, with no names for opaque re
    assert.match(result[i].recipient_id,/^r-[0-9a-f]{32}$/);
   }
  }
- assert.equal(recipients.length,60);
+ assert.equal(recipients.length,62);
  assert.equal(policy.filter(r=>r.repository).length,8);
  assert.ok(recipients.includes('dinkuskit/ship'));
  const added=registry.findIndex(r=>r.recipient_id==='r-5359e1c03bd94b329c9fa00f58e57c0d');
