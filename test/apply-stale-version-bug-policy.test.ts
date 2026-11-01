@@ -196,12 +196,14 @@ test("stale-version bug apply closes an old inactive report", () => {
   assert.match(result.comment, /will be reopened/);
 });
 
+const recentLiveCreatedAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
 for (const [name, options, message] of [
   ["assignee", { assignees: [{ login: "maintainer" }] }, /assigned issue/],
   ["milestone", { milestone: { title: "Next" } }, /milestoned issue/],
   ["reactions", { reactions: 20 }, /20 or more reactions/],
   ["missing reaction count", { omitReactions: true }, /reaction count is unavailable/],
-  ["live age", { createdAt: "2026-07-01T00:00:00Z" }, /older than 120 days/],
+  ["live age", { createdAt: recentLiveCreatedAt }, /older than 120 days/],
   ["security label", { labels: ["topic:security-regression"] }, /security-labeled/],
   ["protected label", { labels: ["clawsweeper:human-review"] }, /protected label/],
   ["linked PR", { labels: ["clawsweeper:linked-pr-open"] }, /linked-pr-open/],

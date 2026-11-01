@@ -44,3 +44,8 @@ test("dispatch binder still clean-skips draft PRs before review", () => {
   assert.match(source, /pull\['state'\] != 'open' or pull\['draft'\]: skip\(\)/);
   assert.equal(workflow.jobs.review.if, "needs.bind.outputs.requested == 'true'");
 });
+
+test("dispatch binder binds pull.base.sha directly without aborting when main advances", () => {
+  assert.match(source, /base = pull\['base'\]\['sha'\]/);
+  assert.doesNotMatch(source, /Base moved during admission|git\/ref\/heads/);
+});
